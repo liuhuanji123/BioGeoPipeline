@@ -51,30 +51,38 @@ pip install pastml
 
 # Install treePL for molecular dating (requires compilation)
 sudo apt-get install build-essential # Ensure you have build tools
+
 git clone https://github.com/blackrim/treePL.git
+
 cd treePL/src && make
+
 After installation, verify that each tool is accessible from your WSL command line by running commands like which raxml-ng.
+
 
 3. R Package Dependencies
 Launch R or RStudio and run the following commands to install the necessary packages.
 
-R
+
 
 # Install required packages from CRAN
 install.packages(c("ape","stringr","seqinr","phytools","pheatmap","tidyverse","ggtree","ggplot2","BioGeoBEARS","dplyr","tidyr","tools","snow","MultinomialCI","reshape2","gridExtra","grid","utils","base","phangorn","plyr","devtools"))
 
 # Install BioGeoBEARS from GitHub
 devtools::install_github("nmatzke/BioGeoBEARS")
+
 🚀 How to Use
+
 The entire pipeline is controlled and executed from the tree_biogeography_version1.R script.
 
 Step 1: Load Functions
+
 Set your R working directory to the root of this project folder. Then, load all pipeline functions into your R session by sourcing the script.
 
-R
 
 source("tree_biogeography_version_1.R")
+
 Step 2: Configure Parameters
+
 In your R session, define the variables that will serve as inputs for the main pipeline function. This is where you specify your target taxa, input files, and analysis settings.
 
 R
@@ -91,10 +99,11 @@ dispersal_multipliers_filepath <- "data/my_dispersal_multipliers_20mya.txt"
 
 # --- 3. Set computational resources ---
 cpu_threads <- 8
+
 Step 3: Run the Main Function
+
 Execute the main pipeline function using the parameters you defined in the previous step. The function will return the results and save all output files to the results/ directory.
 
-R
 
 # Pass the configuration variables as arguments to the main function
 results <- tree_biogeography_pipeline(allsequences_path=allsequences_path,
@@ -105,12 +114,15 @@ results <- tree_biogeography_pipeline(allsequences_path=allsequences_path,
                            threads = cpu_threads,
                            timeperiods_filepath = timeperiods_filepath,
                            dispersal_multipliers_filepath = dispersal_multipliers_filepath)
+                           
 ⚠️ Note: The argument names used in the function call ( distantly_group,sister_group_family, etc.) must exactly match the parameter names defined in the tree_biogeography_pipeline function.
 
 📁 Input File Formats
+
 Correct input file formatting is essential for the pipeline to run successfully.
 
 FASTA Sequence Naming Convention
+
 All sequences in your FASTA files must have headers that follow this strict format, with components separated by underscores (_):
 
 Type_ID_Family_GeographicRegion
@@ -127,8 +139,13 @@ Example:
 
 
 >GMT_JX123456_Staphylinidae_O
+
 ATGCATGCATGC...
+
 >MMG_NC012345_Silphidae_P
+
 ATGCATGCATGC...
+
 📜 License
+
 This project is licensed under the terms of the MIT License. See the LICENSE file for more details.
