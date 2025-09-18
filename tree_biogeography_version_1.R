@@ -1,4 +1,4 @@
-#20250912
+#20250918
 # The pipeline consists of the following steps:
 # construction_tree: Constructs the phylogenetic tree.
 # rooting_tree: Roots the tree generated in the previous step.
@@ -45,7 +45,7 @@ extract_family <- function(tip) {
 # distantly_group
 
 
-construction_tree <- function(nwk_file=NULL, sister_group_family, distantly_group, allsequences_path, mitogenomes_path,threads=14) {
+construction_tree <- function(nwk_file=NULL, sister_group_family, distantly_group, allsequences_path, mitogenomes_path,threads=14,construction_model="GTR+G") {
   library(ape)
   library(stringr)
   library(seqinr)
@@ -203,9 +203,10 @@ construction_tree <- function(nwk_file=NULL, sister_group_family, distantly_grou
   # Construct and run the RAxML-NG command for the backbone tree.
   # A standard GTR+G model is used.
   raxml_backbone_cmd <- sprintf(
-    "wsl %s --all --msa %s --model GTR+G --prefix %s --seed 2 --threads %d --force",
+    "wsl %s --all --msa %s --model %s --prefix %s --seed 2 --threads %d --force",
     raxmlng_executable_path_wsl,
     convert_path_to_wsl(backbone_fasta_path),
+    construction_model,
     convert_path_to_wsl(file.path(output_dir, paste0(base_name, "_backbone"))), # RAxML adds its own suffix.
     threads
   )
@@ -242,10 +243,11 @@ construction_tree <- function(nwk_file=NULL, sister_group_family, distantly_grou
   
   # Construct and run the RAxML-NG command with the backbone tree as a topological constraint.
   raxml_final_cmd <- sprintf(
-    "wsl %s --all --msa %s --tree-constraint %s --model GTR+G --prefix %s --seed 2 --threads %d --force --redo",
+    "wsl %s --all --msa %s --tree-constraint %s --model %s --prefix %s --seed 2 --threads %d --force --redo",
     raxmlng_executable_path_wsl,
     convert_path_to_wsl(final_fasta_path),
     convert_path_to_wsl(backbone_tree_path),
+    construction_model,
     convert_path_to_wsl(file.path(output_dir, paste0(base_name, "_reconstruction"))), # Prefix for the final run.
     threads
   )
@@ -2389,6 +2391,7 @@ tree_biogeography_pipeline<-function(allsequences_path,
                                      sister_group_family,
                                      distantly_group,
                                      threads=10,
+                                     construction_model="GTR+G",
                                      timeperiods_filepath = timeperiods_filepath,
                                      dispersal_multipliers_filepath = dispersal_multipliers_filepath){
   output_dir <- dirname(allsequences_path)
@@ -2407,7 +2410,8 @@ tree_biogeography_pipeline<-function(allsequences_path,
                     distantly_group = distantly_group,
                     allsequences_path =allsequences_path,
                     mitogenomes_path = mitogenomes_path,
-                    threads = threads
+                    threads = threads,
+                    construction_model=construction_model
   )
   
 
