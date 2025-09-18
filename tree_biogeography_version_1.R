@@ -2481,5 +2481,6 @@ tree_biogeography_pipeline<-function(allsequences_path,
 #                            distantly_group=distantly_group,
 #                            threads = 12,
 #                            timeperiods_filepath = timeperiods_filepath,
-#                            dispersal_multipliers_filepath = dispersal_multipliers_filepath)
+#                            dispersal_multipliers_filepath = dispersal_multipliers_filepath,
+#                            construction_model = "GTR+G")
 
