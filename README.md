@@ -117,7 +117,8 @@ results <- tree_biogeography_pipeline(
   distantly_group = distant_groups,
   threads = cpu_threads,
   timeperiods_filepath = timeperiods_filepath,
-  dispersal_multipliers_filepath = dispersal_multipliers_filepath
+  dispersal_multipliers_filepath = dispersal_multipliers_filepath,
+  construction_model = "GTR+G"
 )
 ```
 ⚠️ **Note**: The argument names used in the function call (`distantly_group`, `sister_group_family`, etc.) must exactly match the parameter names defined in the `tree_biogeography_pipeline` function.
@@ -151,3 +152,4 @@ ATGCATGCATGC...
 ## 📜 License
 
 This project is licensed under the terms of the **MIT License**. See the `LICENSE` file for more details.
+
