@@ -91,8 +91,10 @@ In your R session, define the variables that will serve as inputs for the main p
 
 ```R
 # --- 1. Define related groups ---
-sister_groups <- c("Silphidae_135", "Leiodidae_185", "Agyrtidae_185")
-distant_groups <- c("Scarabaeidae", "Tenebrionidae")
+sister_group_family <- list()
+sister_group_family$Staphylinidae<-c("Silphidae_135","Leiodidae_185","Agyrtidae_185","Hydraenidae_185","Ptiliidae_185")
+distantly_group<-list()
+distantly_group$Staphylinidae<- c("Scarabaeidae", "Tenebrionidae")
 
 # --- 2. Define input file paths (must be relative to the project root) ---
 allsequences_path <- "data/test_staphylinidae_barcodes.fasta"
@@ -152,4 +154,5 @@ ATGCATGCATGC...
 ## 📜 License
 
 This project is licensed under the terms of the **MIT License**. See the `LICENSE` file for more details.
+
 
