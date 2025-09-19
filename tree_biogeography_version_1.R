@@ -399,7 +399,8 @@ rooting_tree <- function(undated_tree, distantly_group,sister_group_family) {
 # 
 # # --- Execute the Rooting Function ---
 # rooting_tree(undated_tree = undated_tree,
-#              distantly_group = distantly_group)
+#              distantly_group = distantly_group,
+#              sister_group_family = sister_group_family)
 
 
 # --- Step 3: Perform Tree Dating ---
@@ -2421,9 +2422,11 @@ tree_biogeography_pipeline<-function(allsequences_path,
 
   
   rooting_tree(undated_tree = backbone_tree_path,
-               distantly_group = distantly_group)
+               distantly_group = distantly_group,
+               sister_group_family = sister_group_family)
   rooting_tree(undated_tree = final_tree_path,
-               distantly_group = distantly_group)
+               distantly_group = distantly_group,
+               sister_group_family = sister_group_family)
   
 
   
