@@ -341,7 +341,7 @@ diagnose_and_prune_outgroup <- function(phy, outgroup_tips, action = "prune") {
   }
 }
 
-rooting_tree <- function(undated_tree, distantly_group) {
+rooting_tree <- function(undated_tree, distantly_group,sister_group_family) {
   library(ape)
   library(stringr)
   
@@ -349,9 +349,7 @@ rooting_tree <- function(undated_tree, distantly_group) {
   # distantly_group: A list defining the distant taxa to be used for rooting.
   
   use_nwk_tree <- undated_tree
-  target_family_name1 <- sub("\\.nwk$", "", basename(use_nwk_tree))
-  target_family_name <- sub("_.*", "", target_family_name1)
-  
+
   print(use_nwk_tree)
   use_tree <- read.tree(use_nwk_tree)
   original_tips <- use_tree$tip.label
@@ -361,11 +359,17 @@ rooting_tree <- function(undated_tree, distantly_group) {
   target_family_name <- names(which.max(table(families)))
   
   distantly_family <- distantly_group[[target_family_name]]
+  sister_group_family1 <- lapply(sister_group_family, function(sister_vector) {
+    sub("_\\d+$", "", sister_vector)
+  })
+  sister_family<-sister_group_family1[[target_family_name]]
   
   # Select tips belonging to the designated distant (outgroup) families.
   selected_tips <- use_tree$tip.label[families %in% distantly_family]
   # Enforce that only mitogenome-derived taxa (MMG) are used for rooting.
   selected_tips <- grep("MMG_", selected_tips, value = TRUE)
+  
+  sister_tips<-use_tree$tip.label[families %in% sister_family]
   
   my_outgroups <- selected_tips
   print(my_outgroups)
@@ -374,9 +378,9 @@ rooting_tree <- function(undated_tree, distantly_group) {
     message(paste0(target_family_name, " does not have a suitable outgroup."))
     return(invisible(NULL))
   }
-  
+  pure_tips<-c(my_outgroups,sister_tips)
   # Diagnose and prune the tree to ensure the outgroup is monophyletic.
-  pruned_tree <- diagnose_and_prune_outgroup(use_tree, my_outgroups, action = "prune")
+  pruned_tree <- diagnose_and_prune_outgroup(use_tree, pure_tips, action = "prune")
   
   # Root the tree using the cleaned outgroup. resolve.root = TRUE ensures a bifurcating root, which is standard practice.
   rooted_tree <- root(pruned_tree, outgroup = my_outgroups, resolve.root = TRUE)
