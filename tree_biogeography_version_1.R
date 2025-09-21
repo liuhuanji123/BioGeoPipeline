@@ -1,4 +1,4 @@
-#20250918
+#20250921
 # The pipeline consists of the following steps:
 # construction_tree: Constructs the phylogenetic tree.
 # rooting_tree: Roots the tree generated in the previous step.
@@ -1062,7 +1062,7 @@ pastml_process_tree <- function(dated_tree_path,
 # dispersal_multipliers_filepath <- "C:\\Users\\16575\\Documents\\Rdocuments\\my_dispersal_multipliers_20mya.txt"
 
 run_biogeobears_pipeline <- function(tree_filepath,
-                                     output_tag = "_biogeobears",
+                                     output_tag = "biogeobears",
                                      num_cores = 12,
                                      models_to_run = c("DEC", "DEC+J", "DIVALIKE", "DIVALIKE+J", "BAYAREALIKE", "BAYAREALIKE+J"),
                                      discard_other_family = TRUE, # If TRUE, prune tips from other families to focus the analysis.
@@ -1158,7 +1158,7 @@ run_biogeobears_pipeline <- function(tree_filepath,
   
   output_dir <- save_biogeobears_path
   tree_basename <- tools::file_path_sans_ext(basename(tree_filepath))
-  output_prefix <- file.path(output_dir, paste0(tree_basename, output_tag))
+  output_prefix <- file.path(output_dir,output_tag)
   
   print(paste("Input Tree:", tree_filepath))
   print(paste("Input States (auto-generated):", tip_states_filepath))
