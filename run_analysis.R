@@ -23,5 +23,7 @@ results <- tree_biogeography_pipeline(allsequences_path=allsequences_path,
                                       sister_group_family=sister_group_family,
                                       distantly_group=distantly_group,
                                       threads = cpu_threads,
+                                      construction_model = "GTR+G"，
                                       timeperiods_filepath = timeperiods_filepath,
                                       dispersal_multipliers_filepath = dispersal_multipliers_filepath)
+
