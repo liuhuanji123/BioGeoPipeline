@@ -401,7 +401,10 @@ rooting_tree <- function(undated_tree, distantly_group,sister_group_family) {
     message(paste0(target_family_name, " does not have a suitable outgroup."))
     return(invisible(NULL))
   }
-  pure_tips<-c(my_outgroups,sister_tips)
+  
+  # use_tree<-root(use_tree, outgroup = my_outgroups[1], resolve.root = TRUE)
+  
+  pure_tips<-my_outgroups
   # Diagnose and prune the tree to ensure the outgroup is monophyletic.
   pruned_tree <- diagnose_and_prune_outgroup(use_tree, pure_tips, action = "prune")
   
@@ -409,7 +412,14 @@ rooting_tree <- function(undated_tree, distantly_group,sister_group_family) {
   rooted_tree <- root(pruned_tree, outgroup = my_outgroups, resolve.root = TRUE)
   
   # Write the final rooted tree to a new file.
-  rooted_file <- sub("\\.nwk$", "_rooted.nwk", use_nwk_tree)
+  file_dir  <- dirname(use_nwk_tree)
+  file_base <- basename(use_nwk_tree)
+  file_base_clean <- sanitize_filename(file_base)
+  use_nwk_tree <- file.path(file_dir, file_base_clean)
+  rooted_file <-ifelse(grepl("\\.nwk$", use_nwk_tree),
+                       sub("\\.nwk$", "_rooted.nwk", use_nwk_tree),
+                       paste0(use_nwk_tree, "_rooted.nwk"))
+  
   write.tree(rooted_tree, file = rooted_file)
 }
 
@@ -1062,9 +1072,10 @@ pastml_process_tree <- function(dated_tree_path,
   wsl_ALL_html_out <- file.path(wsl_ALL_work_dir, paste0("ALL_", tree_name, ".html"))
   wsl_ALL_csv_out <- file.path(wsl_ALL_work_dir, paste0("ALL_", tree_name, ".csv"))
   cmd_all <- sprintf(
-    'wsl /home/liuhuanji/miniconda3/bin/pastml --tree "%s" --data "%s" --columns "%s" --id_index 0 --prediction_method ALL --data_sep "," --work_dir "%s" --html_mixed "%s" --out_data "%s" ',
-    wsl_tree, wsl_location, safe_feature, wsl_ALL_work_dir, wsl_ALL_html_out, wsl_ALL_csv_out
+    'wsl %s --tree "%s" --data "%s" --columns "%s" --id_index 0 --prediction_method ALL --data_sep "," --work_dir "%s" --html_mixed "%s" --out_data "%s" ',
+    pastml_path,wsl_tree, wsl_location, safe_feature, wsl_ALL_work_dir, wsl_ALL_html_out, wsl_ALL_csv_out
   )
+
   system(cmd_all, intern = TRUE)
   
   print(paste0(tree_name, " finished"))
