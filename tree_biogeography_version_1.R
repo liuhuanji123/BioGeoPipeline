@@ -2173,8 +2173,16 @@ biogeobears_transition_matrices <- function(best_model_results,
     pdffn = hist_event_counts_fn # Use the 'pdffn' argument to specify the filename.
   )
   # Interpretation Guide:
-  # A narrow histogram (e.g., all bars between 100-110 events) indicates a robust conclusion.
-  # A wide histogram (e.g., bars spread from 50 to 150 events) indicates high uncertainty.
+  # A narrow histogram indicates a robust conclusion.
+  # A wide histogram indicates high uncertainty.
+  
+  # The frequency distributions for the total number of key biogeographical events, 
+  # as inferred across 100 Bayesian Stochastic Maps (BSM), are shown in Figure X. 
+  # Each panel displays a histogram for a specific event type (founder-event, vicariance, subset sympatry, narrow sympatry, and anagenetic dispersal). 
+  # The x-axis indicates the total count of an event per simulated history, and the y-axis represents the number of simulations (frequency) that inferred that count. 
+  # The shape of each distribution reveals the uncertainty in the frequency of that event; 
+  # narrow peaks indicate high consistency and low uncertainty in the inferred number of events, whereas wide distributions suggest high uncertainty.
+  
   cat("Event count histograms saved to:", hist_event_counts_fn, "\n")
   
   # Check consistency between ML ancestral state probabilities and BSM averages.
