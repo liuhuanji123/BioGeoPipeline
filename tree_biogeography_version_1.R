@@ -2323,9 +2323,21 @@ biogeobears_transition_matrices <- function(best_model_results,
   library(gridExtra)
   library(grid)
   
-  # B. Reusable plotting function for heatmaps.
-  plot_heatmap <- function(mat, subplot_title, color_limits) {
-    df <- melt(as.matrix(mat))
+  # B. A more flexible and reusable plotting function for heatmaps
+  plot_heatmap <- function(mat, subplot_title, scale_mode = "global", color_limits = NULL) {
+    
+    # --- NEW LOGIC for flexible scaling ---
+    current_limits <- NULL
+    if (scale_mode == "local") {
+      # For local scale, calculate limits from the current matrix 'mat'
+      local_max <- if (length(mat) > 0 && max(mat, na.rm = TRUE) > 0) max(mat, na.rm = TRUE) else 1
+      current_limits <- c(0, local_max)
+    } else {
+      # For global scale, use the externally provided 'color_limits'
+      current_limits <- color_limits
+    }
+    
+    df <- reshape2::melt(as.matrix(mat))
     colnames(df) <- c("From", "To", "Rate")
     
     ggplot(df, aes(x = To, y = From, fill = Rate)) +
@@ -2333,7 +2345,7 @@ biogeobears_transition_matrices <- function(best_model_results,
       geom_text(aes(label = ifelse(Rate > 0, sprintf("%.1e", Rate), "0.0e+00")), size = 3) +
       scale_fill_gradient(
         low = "lightblue", high = "darkred",
-        limits = color_limits,
+        limits = current_limits, # <-- Use the determined limits
         name = "Rate\n(events/Myr)"
       ) +
       ggtitle(subplot_title) +
@@ -2347,50 +2359,107 @@ biogeobears_transition_matrices <- function(best_model_results,
       )
   }
   
-  # C. Calculate a single, global color scale to make all heatmaps comparable.
+  # =========================================================================
+  # Generate and Save All Plots (Both Global and Independent Scales)
+  # =========================================================================
+  
+  # --- C. Calculate the SINGLE, GLOBAL color scale ---
+  # This part remains the same.
   all_rates <- unlist(c(avg_d_timeslice_rate_list, avg_j_timeslice_rate_list))
   rate_min <- 0
   rate_max <- if (length(all_rates) > 0 && max(all_rates, na.rm = TRUE) > 0) max(all_rates, na.rm = TRUE) else 1
+  global_color_limits <- c(rate_min, rate_max)
   
-  # D. Plot and Save: D-TYPE Event Rates
+  
+  # --- D. Plot and Save: D-TYPE Event Rates ---
   titles_d <- names(avg_d_timeslice_rate_list)
-  plots_d <- mapply(plot_heatmap, avg_d_timeslice_rate_list, titles_d, MoreArgs = list(color_limits = c(rate_min, rate_max)), SIMPLIFY = FALSE)
-  plot_grid_d <- grid.arrange(
-    grobs = plots_d,
-    ncol = 3,
-    top = textGrob("Time-Stratified Range-Expansion (d-type) Event Rates", gp = gpar(fontsize = 16, fontface = "bold"))
-  )
-  save_path_d <- paste0(savedir, "/", model_name, "_Time-Stratified_rates_D_events.png")
-  ggsave(filename = save_path_d, plot = plot_grid_d, width = 20, height = 5 * ceiling(length(plots_d)/3), dpi = 300, limitsize = FALSE)
-  cat("D-type event rate plot saved to:", save_path_d, "\n")
   
-  # E. Plot and Save: J-TYPE Event Rates
+  # D.1: Global Scale for D-events
+  plots_d_global <- mapply(plot_heatmap, avg_d_timeslice_rate_list, titles_d, 
+                           MoreArgs = list(scale_mode = "global", color_limits = global_color_limits), SIMPLIFY = FALSE)
+  plot_grid_d_global <- gridExtra::grid.arrange(
+    grobs = plots_d_global, ncol = 3,
+    top = grid::textGrob("Time-Stratified Range-Expansion (d-type) Rates (Global Scale)", gp = grid::gpar(fontsize = 16, fontface = "bold"))
+  )
+  save_path_d_global <- file.path(savedir, paste0(model_name, "_Time-Stratified_rates_D_events_GLOBAL_scale.png"))
+  ggsave(filename = save_path_d_global, plot = plot_grid_d_global, width = 20, height = 5 * ceiling(length(plots_d_global)/3), dpi = 300, limitsize = FALSE)
+  cat("D-type (Global Scale) plot saved to:", save_path_d_global, "\n")
+  
+  # D.2: Independent Scale for D-events
+  plots_d_local <- mapply(plot_heatmap, avg_d_timeslice_rate_list, titles_d, 
+                          MoreArgs = list(scale_mode = "local"), SIMPLIFY = FALSE)
+  plot_grid_d_local <- gridExtra::grid.arrange(
+    grobs = plots_d_local, ncol = 3,
+    top = grid::textGrob("Time-Stratified Range-Expansion (d-type) Rates (Independent Scales)", gp = grid::gpar(fontsize = 16, fontface = "bold"))
+  )
+  save_path_d_local <- file.path(savedir, paste0(model_name, "_Time-Stratified_rates_D_events_INDEPENDENT_scale.png"))
+  ggsave(filename = save_path_d_local, plot = plot_grid_d_local, width = 20, height = 5 * ceiling(length(plots_d_local)/3), dpi = 300, limitsize = FALSE)
+  cat("D-type (Independent Scale) plot saved to:", save_path_d_local, "\n")
+  
+  
+  # --- E. Plot and Save: J-TYPE Event Rates ---
   if (max(unlist(avg_j_timeslice_rate_list), na.rm = TRUE) > 0) {
     titles_j <- names(avg_j_timeslice_rate_list)
-    plots_j <- mapply(plot_heatmap, avg_j_timeslice_rate_list, titles_j, MoreArgs = list(color_limits = c(rate_min, rate_max)), SIMPLIFY = FALSE)
-    plot_grid_j <- grid.arrange(
-      grobs = plots_j,
-      ncol = 3,
-      top = textGrob("Time-Stratified Founder-Event (j-type) Rates", gp = gpar(fontsize = 16, fontface = "bold"))
+    
+    # E.1: Global Scale for J-events
+    plots_j_global <- mapply(plot_heatmap, avg_j_timeslice_rate_list, titles_j, 
+                             MoreArgs = list(scale_mode = "global", color_limits = global_color_limits), SIMPLIFY = FALSE)
+    plot_grid_j_global <- gridExtra::grid.arrange(
+      grobs = plots_j_global, ncol = 3,
+      top = grid::textGrob("Time-Stratified Founder-Event (j-type) Rates (Global Scale)", gp = grid::gpar(fontsize = 16, fontface = "bold"))
     )
-    save_path_j <- paste0(savedir, "/", model_name, "_Time-Stratified_rates_J_events.png")
-    ggsave(filename = save_path_j, plot = plot_grid_j, width = 20, height = 5 * ceiling(length(plots_j)/3), dpi = 300, limitsize = FALSE)
-    cat("J-type event rate plot saved to:", save_path_j, "\n")
+    save_path_j_global <- file.path(savedir, paste0(model_name, "_Time-Stratified_rates_J_events_GLOBAL_scale.png"))
+    ggsave(filename = save_path_j_global, plot = plot_grid_j_global, width = 20, height = 5 * ceiling(length(plots_j_global)/3), dpi = 300, limitsize = FALSE)
+    cat("J-type (Global Scale) plot saved to:", save_path_j_global, "\n")
+    
+    # E.2: Independent Scale for J-events
+    plots_j_local <- mapply(plot_heatmap, avg_j_timeslice_rate_list, titles_j, 
+                            MoreArgs = list(scale_mode = "local"), SIMPLIFY = FALSE)
+    plot_grid_j_local <- gridExtra::grid.arrange(
+      grobs = plots_j_local, ncol = 3,
+      top = grid::textGrob("Time-Stratified Founder-Event (j-type) Rates (Independent Scales)", gp = grid::gpar(fontsize = 16, fontface = "bold"))
+    )
+    save_path_j_local <- file.path(savedir, paste0(model_name, "_Time-Stratified_rates_J_events_INDEPENDENT_scale.png"))
+    ggsave(filename = save_path_j_local, plot = plot_grid_j_local, width = 20, height = 5 * ceiling(length(plots_j_local)/3), dpi = 300, limitsize = FALSE)
+    cat("J-type (Independent Scale) plot saved to:", save_path_j_local, "\n")
+    
   } else {
-    cat("All J-type event rates are zero. Plotting was skipped.\n")
+    cat("All J-type event rates are zero. Plotting was skipped for J-events.\n")
   }
   
-  # F. Plot and Save: TOTAL (d+j) Event Rates
-  titles_total <- names(avg_total_timeslice_list)
-  plots_total <- mapply(plot_heatmap, avg_total_timeslice_list, titles_total, MoreArgs = list(color_limits = c(rate_min, rate_max)), SIMPLIFY = FALSE)
-  plot_grid_total <- grid.arrange(
-    grobs = plots_total,
-    ncol = 3,
-    top = textGrob("Time-Stratified Total Dispersal (d+j) Event Rates", gp = gpar(fontsize = 16, fontface = "bold"))
+  
+  # --- F. Plot and Save: TOTAL (d+j) Event Rates ---
+  titles_total <- names(avg_total_timeslice_rate_list)
+  
+  # F.1: Global Scale for Total-events
+  plots_total_global <- mapply(plot_heatmap, avg_total_timeslice_rate_list, titles_total, 
+                               MoreArgs = list(scale_mode = "global", color_limits = global_color_limits), SIMPLIFY = FALSE)
+  plot_grid_total_global <- gridExtra::grid.arrange(
+    grobs = plots_total_global, ncol = 3,
+    top = grid::textGrob("Time-Stratified Total Dispersal (d+j) Rates (Global Scale)", gp = grid::gpar(fontsize = 16, fontface = "bold"))
   )
-  save_path_total <- paste0(savedir, "/", model_name, "_Time-Stratified_rates_TOTAL_dispersal.png")
-  ggsave(filename = save_path_total, plot = plot_grid_total, width = 20, height = 5 * ceiling(length(plots_total)/3), dpi = 300, limitsize = FALSE)
-  cat("Total Dispersal (d+j) event rate plot saved to:", save_path_total, "\n")
+  save_path_total_global <- file.path(savedir, paste0(model_name, "_Time-Stratified_rates_TOTAL_dispersal_GLOBAL_scale.png"))
+  ggsave(filename = save_path_total_global, plot = plot_grid_total_global, width = 20, height = 5 * ceiling(length(plots_total_global)/3), dpi = 300, limitsize = FALSE)
+  cat("Total Dispersal (Global Scale) plot saved to:", save_path_total_global, "\n")
+  
+  # F.2: Independent Scale for Total-events
+  plots_total_local <- mapply(plot_heatmap, avg_total_timeslice_rate_list, titles_total, 
+                              MoreArgs = list(scale_mode = "local"), SIMPLIFY = FALSE)
+  plot_grid_total_local <- gridExtra::grid.arrange(
+    grobs = plots_total_local, ncol = 3,
+    top = grid::textGrob("Time-Stratified Total Dispersal (d+j) Rates (Independent Scales)", gp = grid::gpar(fontsize = 16, fontface = "bold"))
+  )
+  save_path_total_local <- file.path(savedir, paste0(model_name, "_Time-Stratified_rates_TOTAL_dispersal_INDEPENDENT_scale.png"))
+  ggsave(filename = save_path_total_local, plot = plot_grid_total_local, width = 20, height = 5 * ceiling(length(plots_total_local)/3), dpi = 300, limitsize = FALSE)
+  cat("Total Dispersal (Independent Scale) plot saved to:", save_path_total_local, "\n")
+  
+  
+  cat("\nBioGeoBEARS visualization finished. All 6 plot files generated.\n")
+  
+  
+  
+  
+  
   
   cat("BioGeoBEARS visualization finished.")
 }
