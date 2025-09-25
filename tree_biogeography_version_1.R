@@ -1,4 +1,4 @@
-#20250921
+#20250925
 # The pipeline consists of the following steps:
 # construction_tree: Constructs the phylogenetic tree.
 # rooting_tree: Roots the tree generated in the previous step.
@@ -27,6 +27,29 @@ extract_family <- function(tip) {
   parts[length(parts) - 1]  # The second-to-last element is the taxon name.
 }
 
+#' @title Sanitize a string to be a valid filename
+#' @description Replaces potentially problematic characters in a string with underscores.
+#' This is useful for creating safe filenames from variable names or descriptions.
+#'
+#' @param filename A character string to be sanitized.
+#' @param replacement_char The character to use for replacing special characters.
+#' Defaults to "_".
+#'
+#' @return A sanitized character string, safe for use as a filename.
+#'
+sanitize_filename <- function(filename, replacement_char = "_") {
+  # Define a regular expression that matches common problematic characters.
+  # This includes: space, +, /, \, :, *, ?, ", <, >, |
+  # The \\ is an escaped backslash.
+  bad_chars_regex <- "[+ /\\\\:*?\"<>|]"
+  
+  # Use gsub() to find all occurrences of the bad characters and replace them.
+  sanitized_name <- gsub(pattern = bad_chars_regex, 
+                         replacement = replacement_char, 
+                         x = filename)
+  
+  return(sanitized_name)
+}
 
 # Path to the FASTA file containing all barcode sequences. This includes barcodes 
 # for the target family, distant groups, and sister families. For taxa with full 
@@ -1833,7 +1856,7 @@ run_biogeobears_pipeline <- function(tree_filepath,
 biogeobears_transition_matrices <- function(best_model_results,
                                             save_biogeobears_path,
                                             comparison_table,
-                                            bsm_sims = 50,
+                                            bsm_sims = 100,
                                             time_boundaries) {
   
   # This first line re-defines the save path based on a global variable 'tree_filepath', 
@@ -2157,25 +2180,42 @@ biogeobears_transition_matrices <- function(best_model_results,
   # Check consistency between ML ancestral state probabilities and BSM averages.
   # Requires the 'MultinomialCI' package.
   library(MultinomialCI)
-  check_ML_vs_BSM_fn <- paste0(savedir, "/", model_name, "_ML_vs_BSM_check.pdf")
-  pdf(file = check_ML_vs_BSM_fn, width = 7, height = 7)
-  
+  check_ML_vs_BSM_fn <- paste0(savedir, "/", sanitize_filename(model_name), "_ML_vs_BSM_check.pdf")
+
   # Ensure that the cladogenetic event tables list contains valid data frames.
   if (length(clado_events_tables_src) > 0 && inherits(clado_events_tables_src[[1]], "data.frame")) {
-    BioGeoBEARS::check_ML_vs_BSM(res = res,
-                                 clado_events_tables = clado_events_tables_src,
-                                 model_name = model_name,
-                                 tr = tr,
-                                 plot_each_node = FALSE,
-                                 linreg_plot = TRUE,
-                                 MultinomialCI = TRUE)
+    check_ML_vs_BSM(res = res,
+                    clado_events_tables = clado_events_tables_src,
+                    model_name = sanitize_filename(model_name),
+                    tr = tr,
+                    plot_each_node = FALSE,
+                    linreg_plot = TRUE,
+                    MultinomialCI = TRUE)
+
   } else {
     plot(1, 1, type = "n", xlab = "", ylab = "", main = "Could not generate ML vs BSM plot:\n'clado_events_tables_src' is invalid")
     text(1, 1, "'clado_events_tables_src' may be empty or incorrectly formatted.")
     warning("Could not generate ML vs BSM plot; 'clado_events_tables_src' may be empty or incorrectly formatted.")
   }
-  dev.off()
-  cat("Comparison plot of ML ancestral states vs. BSM averages saved to:", check_ML_vs_BSM_fn, "\n")
+  #cat("Comparison plot of ML ancestral states vs. BSM averages saved to:", check_ML_vs_BSM_fn, "\n")
+  
+  # Construct the full path to the original file, which was generated in the current working directory.
+  source_file <- file.path(getwd(), paste0(sanitize_filename(model_name), "_ML_vs_BSM.pdf"))
+  
+  # Define the final destination path and filename where you want to store the plot.
+  # (This is the same as the 'check_ML_vs_BSM_fn' variable from your previous code).
+  destination_file <- check_ML_vs_BSM_fn
+  
+  # Before trying to move the file, it's best practice to check if it was successfully created.
+  if (file.exists(source_file)) {
+    # Execute the move and rename operation.
+    file.rename(from = source_file, to = destination_file)
+    # Print a success message, which is now accurate, confirming the final location.
+    cat("Comparison plot of ML ancestral states vs. BSM averages moved and saved to:", destination_file, "\n")
+  } else {
+    # If the source file wasn't found, issue a warning.
+    warning("BioGeoBEARS::check_ML_vs_BSM did not seem to create the expected output file at: ", source_file)
+  }
   
   # --- Time-Stratified Event Rate Calculation ---
   
@@ -2353,6 +2393,151 @@ biogeobears_transition_matrices <- function(best_model_results,
   cat("Total Dispersal (d+j) event rate plot saved to:", save_path_total, "\n")
   
   cat("BioGeoBEARS visualization finished.")
+}
+
+check_ML_vs_BSM <- function(res, clado_events_tables, model_name, tr=NULL, plot_each_node=FALSE, linreg_plot=TRUE, MultinomialCI=TRUE){
+  # We assessed the robustness of the Maximum Likelihood (ML) ancestral state reconstructions by comparing them with the results from a Bayesian Stochastic Mapping (BSM) analysis. 
+  # Using the check_ML_vs_BSM function in the R package BioGeoBEARS, we generated a scatter plot of the ML marginal probabilities versus the mean state probabilities averaged across 100 stochastic maps for every state at each node in the phylogeny. 
+  # The concordance between these two estimation methods was quantified using the R-squared (R²) value of a linear regression. A high R² value indicates that the ML estimates are a reliable representation of the mean posterior probabilities from the BSMs.
+  
+  # Get tree if needed
+  if (is.null(tr))
+  {
+    #tr = read.tree(res$inputs$trfn)
+    tr = check_trfn(trfn=res$inputs$trfn)
+  } # END if (is.null(tr))
+  
+  # Determine if a stratified analysis if needed
+  if (is.null(res$inputs$stratified))
+  {
+    if (is.numeric(res$inputs$timeperiods) == TRUE)
+    {
+      res$inputs$stratified = TRUE
+    } else {
+      res$inputs$stratified = FALSE
+    }# END if (is.numeric(BioGeoBEARS_run_object$timeperiods) == TRUE)
+  } # END if (is.null(res$inputs$stratified))
+  stratified = res$inputs$stratified
+  
+  
+  pdffn = paste0(model_name, "_ML_vs_BSM.pdf")
+  pdf(file=pdffn, height=6, width=6)
+  
+  x_all = NULL
+  y_all = NULL
+  numtips = length(tr$tip.label)
+  intnodenums = (numtips+1):(numtips+tr$Nnode)
+  
+  MLstateprobs = res$ML_marginal_prob_each_state_at_branch_top_AT_node
+  numstates = ncol(MLstateprobs)
+  BSMstates_summary = calc_BSM_mean_node_states(clado_events_tables, tr, numstates)
+  state_counts_1based = BSMstates_summary$state_counts_1based
+  meanBSMprobs = BSMstates_summary$meanBSMprobs
+  sumBSMcounts = BSMstates_summary$sumBSMcounts
+  
+  node_history_samples_allNodes = NULL
+  cat("\nCalculating BSM means for node #:", sep="")
+  
+  for (nodenum in intnodenums)
+  {
+    cat(nodenum, " ", sep="")
+    
+    node_history_samples = NULL
+    for (i in 1:length(clado_events_tables))
+    {
+      clado_events_table = clado_events_tables[[i]]
+      if (stratified == TRUE)
+      {
+        TF1 = clado_events_table$SUBnode.type != "tip"
+        TF2 = clado_events_table$node.type != "tip"
+        TF = (TF1+TF2)==2
+      } else {
+        TF = clado_events_table$node.type != "tip"
+      }
+      clado_events_table = clado_events_table[TF,]
+      TF = clado_events_table$node == nodenum
+      node_history_sample = clado_events_table[TF,]
+      node_history_samples = rbind(node_history_samples, node_history_sample)
+    } # END for (i in 1:length(clado_events_tables))
+    head(node_history_samples)
+    class(node_history_samples)
+    dim(node_history_samples)
+    
+    # Save
+    node_history_samples_allNodes = rbind(node_history_samples_allNodes, node_history_samples)
+    
+    node_history_samples$clado_event_txt
+    node_history_samples$sampled_states_AT_nodes
+    
+    
+    cbind(node_history_samples$sampled_states_AT_nodes, node_history_samples$sampled_states_AT_brbots)
+    table(node_history_samples$sampled_states_AT_nodes)
+    table(node_history_samples$sampled_states_AT_brbots)
+    
+    x=round(res$ML_marginal_prob_each_state_at_branch_top_AT_node[nodenum,],3)
+    
+    num_root_state = table(node_history_samples$sampled_states_AT_nodes)
+    fract_root_state = num_root_state / sum(num_root_state)
+    obs_BSM_probs_at_root = rep(0, length(x))
+    obs_BSM_probs_at_root[as.numeric(names(fract_root_state))] = fract_root_state
+    
+    x=round(res$ML_marginal_prob_each_state_at_branch_top_AT_node[nodenum,],3)
+    y=obs_BSM_probs_at_root
+    x_all = c(x_all, x)
+    y_all = c(y_all, y)
+    
+    if (plot_each_node == TRUE)
+    {
+      plot(x,y, xlim=c(0,1), ylim=c(0,1), xlabel="ML marginal probs", ylabel="BSM probs")
+      segments(0,0,1,1)
+      title(nodenum)
+    } # END if (plot_each_node == TRUE)
+  } # END for (nodenum in 20:37)
+  cat("...done.\n\n")
+  
+  # Plot allnodes
+  if (linreg_plot == FALSE)
+  {
+    plot(x_all, y_all, xlim=c(0,1), ylim=c(0,1), xlabel="ML marginal probs", ylabel="BSM probs")
+    segments(0,0,1,1)
+    title("all nodes")
+  } # END if (linreg_plot == FALSE)
+  
+  if (linreg_plot == TRUE)
+  {
+    linear_regression_plot(x=x_all, y=y_all, tmppch=1, xlabel="State probabilities under ML model", ylabel="State probabilities as mean of BSMs", xlim=c(0,1), ylim=c(0,1))
+    # Multiple R-squared:  0.9655,	Adjusted R-squared:  0.9655 
+    title(paste0(model_name, ":\nML state probs vs. mean of BSMs"))
+  } # END if (linreg_plot == TRUE)
+  
+  if (MultinomialCI == TRUE)
+  {
+    # Try doing confidence intervals
+    #require(MultinomialCI)
+    sumBSMcounts2 = sumBSMcounts[-(1:numtips),]
+    
+    # Confident intervals for a particular node
+    # CI95 = multinomialCI(x=sumBSMcounts2[1,], alpha=0.05, verbose=TRUE)
+    # CI95
+    
+    # Add multinomial CI95s to plot
+    cat("\nAdding CI95 segments for: ", sep="")
+    for (i in 1:tr$Nnode)
+    {
+      cat(i+numtips, " ", sep="")
+      tmpcounts = sumBSMcounts2[i,]
+      CI95 = MultinomialCI::multinomialCI(x=tmpcounts, alpha=0.05, verbose=FALSE)
+      #xvals = tmpcounts / sum(tmpcounts)
+      xvals = MLstateprobs[-(1:numtips),][i,]
+      segments(x0=xvals, x1=xvals, y0=CI95[,1], y1=CI95[,2])
+    } # for (1 in 1:numnodes)
+  } # END if (MultinomialCI == TRUE)
+  cat("...done.\n\n")
+  
+  # Close PDF and open for viewer
+  dev.off()
+  #cmdstr = paste("open ", pdffn)
+  #system(cmdstr)
 }
 
 
