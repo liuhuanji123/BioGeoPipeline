@@ -1,4 +1,4 @@
-#20250925
+#20250927
 # The pipeline consists of the following steps:
 # construction_tree: Constructs the phylogenetic tree.
 # rooting_tree: Roots the tree generated in the previous step.
@@ -2472,15 +2472,46 @@ biogeobears_transition_matrices <- function(best_model_results,
   ggsave(filename = save_path_total_local, plot = plot_grid_total_local, width = 20, height = 5 * ceiling(length(plots_total_local)/3), dpi = 300, limitsize = FALSE)
   cat("Total Dispersal (Independent Scale) plot saved to:", save_path_total_local, "\n")
   
+  # --- 7.6 Generate all temporal trend plots ---
+  cat("\n--- Generating temporal trend plots ---\n")
   
+  tree_age <- max(branching.times(tr))
+  binning_size <- 10 # Set a uniform bin size for time-based event counting.
+  
+  # --- Main Figure ---
+  main_plot <- plot_immigration_emigration_trends(
+    clado_events_tables = clado_events_tables_src,
+    ana_events_tables = ana_events_tables_src,
+    areanames = areanames, tree_age = tree_age, bin_size = binning_size
+  )
+  ggsave(file.path(savedir, paste0(model_name, "_main_Immigration_vs_Emigration.png")), 
+         plot = main_plot, width = 12, height = 8, dpi = 300)
+  cat("Main trend plot (Immigration vs. Emigration) saved.\n")
+  
+  # --- Supplementary Figure 1 ---
+  supp_plot1 <- plot_immigration_components(
+    clado_events_tables = clado_events_tables_src,
+    ana_events_tables = ana_events_tables_src,
+    areanames = areanames, tree_age = tree_age, bin_size = binning_size
+  )
+  ggsave(file.path(savedir, paste0(model_name, "_supp_Immigration_Components.png")), 
+         plot = supp_plot1, width = 12, height = 8, dpi = 300)
+  cat("Supplementary plot (Immigration Components d vs j) saved.\n")
+  
+  # --- Supplementary Figure 2 ---
+  supp_plot2 <- plot_emigration_components(
+    clado_events_tables = clado_events_tables_src,
+    ana_events_tables = ana_events_tables_src,
+    areanames = areanames, tree_age = tree_age, bin_size = binning_size
+  )
+  ggsave(file.path(savedir, paste0(model_name, "_supp_Emigration_Components.png")), 
+         plot = supp_plot2, width = 12, height = 8, dpi = 300)
+  cat("Supplementary plot (Emigration Components d vs j) saved.\n")
+  
+
   cat("\nBioGeoBEARS visualization finished. All 6 plot files generated.\n")
   
   
-  
-  
-  
-  
-  cat("BioGeoBEARS visualization finished.")
 }
 
 check_ML_vs_BSM <- function(res, clado_events_tables, model_name, tr=NULL, plot_each_node=FALSE, linreg_plot=TRUE, MultinomialCI=TRUE){
@@ -2631,9 +2662,212 @@ check_ML_vs_BSM <- function(res, clado_events_tables, model_name, tr=NULL, plot_
 
 
 
+# Function 1 (Main Figure): Plot temporal dynamics of Immigration vs. Emigration
+plot_immigration_emigration_trends <- function(clado_events_tables, 
+                                               ana_events_tables, 
+                                               areanames,
+                                               tree_age,
+                                               bin_size = 10) {
+  
+  # Define time bins based on tree age and desired bin size.
+  time_breaks <- seq(0, ceiling(tree_age / bin_size) * bin_size, by = bin_size)
+  time_labels <- paste(time_breaks[-length(time_breaks)], time_breaks[-1], sep="-")
+  num_sims <- length(clado_events_tables)
+  
+  # Iterate through each BSM simulation to tally events.
+  results_per_sim <- list()
+  for (i in 1:num_sims) {
+    clado_table <- clado_events_tables[[i]]
+    ana_table <- ana_events_tables[[i]]
+    
+    # a. Tally Immigration events (d_in + j_in).
+    # Immigration is defined as any dispersal event where a region is the DESTINATION.
+    d_in <- if(nrow(ana_table) > 0) ana_table %>% filter(event_type == "d") %>% select(time=abs_event_time, area=dispersal_to) else data.frame()
+    j_in <- if(nrow(clado_table) > 0) clado_table %>% filter(clado_event_type == "founder (j)") %>% select(time=time_bp, area=clado_dispersal_to) else data.frame()
+    imm_counts <- bind_rows(d_in, j_in) %>%
+      mutate(time_bin = cut(time, breaks = time_breaks, labels = time_labels, right = FALSE)) %>%
+      filter(!is.na(time_bin)) %>%
+      group_by(time_bin, area) %>% summarise(count = n(), .groups = 'drop') %>%
+      mutate(event_type = "Immigration")
+    
+    # b. Tally Emigration events (d_out + j_out).
+    # Emigration is defined as any dispersal event where a region is the SOURCE.
+    d_out <- if(nrow(ana_table) > 0) ana_table %>% filter(event_type == "d") %>% select(time=abs_event_time, area=ana_dispersal_from) else data.frame()
+    j_out <- if(nrow(clado_table) > 0) clado_table %>% filter(clado_event_type == "founder (j)") %>% select(time=time_bp, area=clado_dispersal_from) else data.frame()
+    emi_counts <- bind_rows(d_out, j_out) %>%
+      mutate(time_bin = cut(time, breaks = time_breaks, labels = time_labels, right = FALSE)) %>%
+      filter(!is.na(time_bin) & !is.na(area)) %>% # Source area cannot be NA.
+      group_by(time_bin, area) %>% summarise(count = n(), .groups = 'drop') %>%
+      mutate(event_type = "Emigration")
+    
+    # Combine results for the current simulation.
+    sim_results <- bind_rows(imm_counts, emi_counts)
+    if(nrow(sim_results) > 0) {
+      sim_results$sim_id <- i
+      results_per_sim[[i]] <- sim_results
+    }
+  }
+  
+  # Aggregate results from all simulations.
+  all_sim_results <- bind_rows(results_per_sim)
+  
+  # Create a full grid of all possible combinations to handle zero-count cases correctly.
+  full_grid <- expand.grid(time_bin = time_labels, area = areanames, 
+                           event_type = c("Immigration", "Emigration"),
+                           sim_id = 1:num_sims, stringsAsFactors = FALSE)
+  
+  # Join simulation results to the full grid and replace NAs with 0.
+  summary_data <- full_grid %>%
+    left_join(all_sim_results, by = c("time_bin", "area", "event_type", "sim_id")) %>%
+    mutate(count = ifelse(is.na(count), 0, count))
+  
+  # Calculate the mean and 5%-95% quantiles for each group.
+  final_summary <- summary_data %>%
+    group_by(time_bin, area, event_type) %>%
+    summarise(mean_events = mean(count),
+              lower_q = quantile(count, 0.05),
+              upper_q = quantile(count, 0.95), .groups = 'drop') %>%
+    # Convert time bin factor to a numeric value (midpoint) for plotting.
+    mutate(time_mid = as.numeric(sub("-.*", "", time_bin)) + (bin_size / 2))
+  
+  # Generate the plot using ggplot2.
+  p <- ggplot(final_summary, aes(x = time_mid, y = mean_events, color = event_type, fill = event_type)) +
+    geom_ribbon(aes(ymin = lower_q, ymax = upper_q), alpha = 0.2, linetype = 0) + # Shaded 90% quantile interval
+    geom_line(size = 1) + # Mean trend line
+    facet_wrap(~ area, scales = "fixed") + # Facet by area with a fixed y-axis for direct comparison
+    scale_color_manual(name = "Process", values = c("Immigration" = "darkblue", "Emigration" = "darkred")) +
+    scale_fill_manual(name = "Process", values = c("Immigration" = "lightblue", "Emigration" = "lightcoral")) +
+    labs(title = "Temporal Dynamics of Immigration vs. Emigration by Region",
+         subtitle = paste("Averaged over", num_sims, "BSM scenarios in", bin_size, "Ma bins"),
+         x = "Time (Million years ago)", y = "Average Number of Events per Time Bin") +
+    scale_x_reverse() + theme_bw() + theme(legend.position = "bottom")
+  
+  return(p)
+}
 
 
+# Function 2 (Supplementary Figure 1): Plot components of Immigration events (d vs. j)
+plot_immigration_components <- function(clado_events_tables, 
+                                        ana_events_tables, 
+                                        areanames,
+                                        tree_age,
+                                        bin_size = 10) {
+  
+  time_breaks <- seq(0, ceiling(tree_age / bin_size) * bin_size, by = bin_size)
+  time_labels <- paste(time_breaks[-length(time_breaks)], time_breaks[-1], sep="-")
+  num_sims <- length(clado_events_tables)
+  
+  results_per_sim <- list()
+  for (i in 1:num_sims) {
+    clado_table <- clado_events_tables[[i]]
+    ana_table <- ana_events_tables[[i]]
+    
+    # Tally d-type and j-type immigration events separately.
+    d_in <- if(nrow(ana_table) > 0) ana_table %>% filter(event_type == "d") %>% select(time=abs_event_time, area=dispersal_to) %>% mutate(event_type="d (Range Expansion)") else data.frame()
+    j_in <- if(nrow(clado_table) > 0) clado_table %>% filter(clado_event_type == "founder (j)") %>% select(time=time_bp, area=clado_dispersal_to) %>% mutate(event_type="j (Founder Event)") else data.frame()
+    
+    sim_results <- bind_rows(d_in, j_in) %>%
+      mutate(time_bin = cut(time, breaks = time_breaks, labels = time_labels, right = FALSE)) %>%
+      filter(!is.na(time_bin)) %>%
+      group_by(time_bin, area, event_type) %>% summarise(count = n(), .groups = 'drop')
+    
+    if(nrow(sim_results) > 0) {
+      sim_results$sim_id <- i
+      results_per_sim[[i]] <- sim_results
+    }
+  }
+  
+  all_sim_results <- bind_rows(results_per_sim)
+  
+  full_grid <- expand.grid(time_bin = time_labels, area = areanames, 
+                           event_type = c("d (Range Expansion)", "j (Founder Event)"),
+                           sim_id = 1:num_sims, stringsAsFactors = FALSE)
+  
+  summary_data <- full_grid %>%
+    left_join(all_sim_results, by = c("time_bin", "area", "event_type", "sim_id")) %>%
+    mutate(count = ifelse(is.na(count), 0, count))
+  
+  final_summary <- summary_data %>%
+    group_by(time_bin, area, event_type) %>%
+    summarise(mean_events = mean(count),
+              lower_q = quantile(count, 0.05),
+              upper_q = quantile(count, 0.95), .groups = 'drop') %>%
+    mutate(time_mid = as.numeric(sub("-.*", "", time_bin)) + (bin_size / 2))
+  
+  p <- ggplot(final_summary, aes(x = time_mid, y = mean_events, color = event_type, fill = event_type)) +
+    geom_ribbon(aes(ymin = lower_q, ymax = upper_q), alpha = 0.2, linetype = 0) +
+    geom_line(size = 1) +
+    facet_wrap(~ area, scales = "free_y") + # Using a free y-axis is often better for component plots
+    labs(title = "Components of Immigration Events by Region",
+         subtitle = paste("Averaged over", num_sims, "BSM scenarios in", bin_size, "Ma bins"),
+         x = "Time (Million years ago)", y = "Average Number of Events per Time Bin",
+         color = "Immigration Type", fill = "Immigration Type") +
+    scale_x_reverse() + theme_bw() + theme(legend.position = "bottom")
+  
+  return(p)
+}
 
+
+# Function 3 (Supplementary Figure 2): Plot components of Emigration events (d vs. j)
+plot_emigration_components <- function(clado_events_tables, 
+                                       ana_events_tables, 
+                                       areanames,
+                                       tree_age,
+                                       bin_size = 10) {
+  
+  time_breaks <- seq(0, ceiling(tree_age / bin_size) * bin_size, by = bin_size)
+  time_labels <- paste(time_breaks[-length(time_breaks)], time_breaks[-1], sep="-")
+  num_sims <- length(clado_events_tables)
+  
+  results_per_sim <- list()
+  for (i in 1:num_sims) {
+    clado_table <- clado_events_tables[[i]]
+    ana_table <- ana_events_tables[[i]]
+    
+    # Tally d-type and j-type emigration events separately.
+    d_out <- if(nrow(ana_table) > 0) ana_table %>% filter(event_type == "d") %>% select(time=abs_event_time, area=ana_dispersal_from) %>% mutate(event_type="d (Range Expansion)") else data.frame()
+    j_out <- if(nrow(clado_table) > 0) clado_table %>% filter(clado_event_type == "founder (j)") %>% select(time=time_bp, area=clado_dispersal_from) %>% mutate(event_type="j (Founder Event)") else data.frame()
+    
+    sim_results <- bind_rows(d_out, j_out) %>%
+      mutate(time_bin = cut(time, breaks = time_breaks, labels = time_labels, right = FALSE)) %>%
+      filter(!is.na(time_bin) & !is.na(area)) %>%
+      group_by(time_bin, area, event_type) %>% summarise(count = n(), .groups = 'drop')
+    
+    if(nrow(sim_results) > 0) {
+      sim_results$sim_id <- i
+      results_per_sim[[i]] <- sim_results
+    }
+  }
+  
+  all_sim_results <- bind_rows(results_per_sim)
+  
+  full_grid <- expand.grid(time_bin = time_labels, area = areanames, 
+                           event_type = c("d (Range Expansion)", "j (Founder Event)"),
+                           sim_id = 1:num_sims, stringsAsFactors = FALSE)
+  
+  summary_data <- full_grid %>%
+    left_join(all_sim_results, by = c("time_bin", "area", "event_type", "sim_id")) %>%
+    mutate(count = ifelse(is.na(count), 0, count))
+  
+  final_summary <- summary_data %>%
+    group_by(time_bin, area, event_type) %>%
+    summarise(mean_events = mean(count),
+              lower_q = quantile(count, 0.05),
+              upper_q = quantile(count, 0.95), .groups = 'drop') %>%
+    mutate(time_mid = as.numeric(sub("-.*", "", time_bin)) + (bin_size / 2))
+  
+  p <- ggplot(final_summary, aes(x = time_mid, y = mean_events, color = event_type, fill = event_type)) +
+    geom_ribbon(aes(ymin = lower_q, ymax = upper_q), alpha = 0.2, linetype = 0) +
+    geom_line(size = 1) +
+    facet_wrap(~ area, scales = "free_y") + # Using a free y-axis is often better for component plots
+    labs(title = "Components of Emigration Events by Region",
+         subtitle = paste("Averaged over", num_sims, "BSM scenarios in", bin_size, "Ma bins"),
+         x = "Time (Million years ago)", y = "Average Number of Events per Time Bin",
+         color = "Emigration Type", fill = "Emigration Type") +
+    scale_x_reverse() + theme_bw() + theme(legend.position = "bottom")
+  
+  return(p)
+}
 
 
 
