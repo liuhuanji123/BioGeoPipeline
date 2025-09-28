@@ -1,4 +1,4 @@
-#20250927
+#20250928
 # The pipeline consists of the following steps:
 # construction_tree: Constructs the phylogenetic tree.
 # rooting_tree: Roots the tree generated in the previous step.
@@ -2660,8 +2660,6 @@ check_ML_vs_BSM <- function(res, clado_events_tables, model_name, tr=NULL, plot_
 }
 
 
-
-
 # Function 1 (Main Figure): Plot temporal dynamics of Immigration vs. Emigration
 plot_immigration_emigration_trends <- function(clado_events_tables, 
                                                ana_events_tables, 
@@ -2682,8 +2680,14 @@ plot_immigration_emigration_trends <- function(clado_events_tables,
     
     # a. Tally Immigration events (d_in + j_in).
     # Immigration is defined as any dispersal event where a region is the DESTINATION.
-    d_in <- if(nrow(ana_table) > 0) ana_table %>% filter(event_type == "d") %>% select(time=abs_event_time, area=dispersal_to) else data.frame()
-    j_in <- if(nrow(clado_table) > 0) clado_table %>% filter(clado_event_type == "founder (j)") %>% select(time=time_bp, area=clado_dispersal_to) else data.frame()
+    d_in <- if(is.data.frame(ana_table) && nrow(ana_table) > 0) {
+      ana_table %>% filter(event_type == "d") %>% select(time=abs_event_time, area=dispersal_to)
+    } else { data.frame() }
+    
+    j_in <- if(is.data.frame(clado_table) && nrow(clado_table) > 0) {
+      clado_table %>% filter(clado_event_type == "founder (j)") %>% select(time=time_bp, area=clado_dispersal_to)
+    } else { data.frame() }
+    
     imm_counts <- bind_rows(d_in, j_in) %>%
       mutate(time_bin = cut(time, breaks = time_breaks, labels = time_labels, right = FALSE)) %>%
       filter(!is.na(time_bin)) %>%
@@ -2692,8 +2696,14 @@ plot_immigration_emigration_trends <- function(clado_events_tables,
     
     # b. Tally Emigration events (d_out + j_out).
     # Emigration is defined as any dispersal event where a region is the SOURCE.
-    d_out <- if(nrow(ana_table) > 0) ana_table %>% filter(event_type == "d") %>% select(time=abs_event_time, area=ana_dispersal_from) else data.frame()
-    j_out <- if(nrow(clado_table) > 0) clado_table %>% filter(clado_event_type == "founder (j)") %>% select(time=time_bp, area=clado_dispersal_from) else data.frame()
+    d_out <- if(is.data.frame(ana_table) && nrow(ana_table) > 0) {
+      ana_table %>% filter(event_type == "d") %>% select(time=abs_event_time, area=ana_dispersal_from)
+    } else { data.frame() }
+    
+    j_out <- if(is.data.frame(clado_table) && nrow(clado_table) > 0) {
+      clado_table %>% filter(clado_event_type == "founder (j)") %>% select(time=time_bp, area=clado_dispersal_from)
+    } else { data.frame() }
+    
     emi_counts <- bind_rows(d_out, j_out) %>%
       mutate(time_bin = cut(time, breaks = time_breaks, labels = time_labels, right = FALSE)) %>%
       filter(!is.na(time_bin) & !is.na(area)) %>% # Source area cannot be NA.
@@ -2745,7 +2755,6 @@ plot_immigration_emigration_trends <- function(clado_events_tables,
   return(p)
 }
 
-
 # Function 2 (Supplementary Figure 1): Plot components of Immigration events (d vs. j)
 plot_immigration_components <- function(clado_events_tables, 
                                         ana_events_tables, 
@@ -2763,8 +2772,13 @@ plot_immigration_components <- function(clado_events_tables,
     ana_table <- ana_events_tables[[i]]
     
     # Tally d-type and j-type immigration events separately.
-    d_in <- if(nrow(ana_table) > 0) ana_table %>% filter(event_type == "d") %>% select(time=abs_event_time, area=dispersal_to) %>% mutate(event_type="d (Range Expansion)") else data.frame()
-    j_in <- if(nrow(clado_table) > 0) clado_table %>% filter(clado_event_type == "founder (j)") %>% select(time=time_bp, area=clado_dispersal_to) %>% mutate(event_type="j (Founder Event)") else data.frame()
+    d_in <- if(is.data.frame(ana_table) && nrow(ana_table) > 0) {
+      ana_table %>% filter(event_type == "d") %>% select(time=abs_event_time, area=dispersal_to) %>% mutate(event_type="d (Range Expansion)")
+    } else { data.frame() }
+    
+    j_in <- if(is.data.frame(clado_table) && nrow(clado_table) > 0) {
+      clado_table %>% filter(clado_event_type == "founder (j)") %>% select(time=time_bp, area=clado_dispersal_to) %>% mutate(event_type="j (Founder Event)")
+    } else { data.frame() }
     
     sim_results <- bind_rows(d_in, j_in) %>%
       mutate(time_bin = cut(time, breaks = time_breaks, labels = time_labels, right = FALSE)) %>%
@@ -2807,7 +2821,6 @@ plot_immigration_components <- function(clado_events_tables,
   return(p)
 }
 
-
 # Function 3 (Supplementary Figure 2): Plot components of Emigration events (d vs. j)
 plot_emigration_components <- function(clado_events_tables, 
                                        ana_events_tables, 
@@ -2825,8 +2838,13 @@ plot_emigration_components <- function(clado_events_tables,
     ana_table <- ana_events_tables[[i]]
     
     # Tally d-type and j-type emigration events separately.
-    d_out <- if(nrow(ana_table) > 0) ana_table %>% filter(event_type == "d") %>% select(time=abs_event_time, area=ana_dispersal_from) %>% mutate(event_type="d (Range Expansion)") else data.frame()
-    j_out <- if(nrow(clado_table) > 0) clado_table %>% filter(clado_event_type == "founder (j)") %>% select(time=time_bp, area=clado_dispersal_from) %>% mutate(event_type="j (Founder Event)") else data.frame()
+    d_out <- if(is.data.frame(ana_table) && nrow(ana_table) > 0) {
+      ana_table %>% filter(event_type == "d") %>% select(time=abs_event_time, area=ana_dispersal_from) %>% mutate(event_type="d (Range Expansion)")
+    } else { data.frame() }
+    
+    j_out <- if(is.data.frame(clado_table) && nrow(clado_table) > 0) {
+      clado_table %>% filter(clado_event_type == "founder (j)") %>% select(time=time_bp, area=clado_dispersal_from) %>% mutate(event_type="j (Founder Event)")
+    } else { data.frame() }
     
     sim_results <- bind_rows(d_out, j_out) %>%
       mutate(time_bin = cut(time, breaks = time_breaks, labels = time_labels, right = FALSE)) %>%
@@ -2868,7 +2886,6 @@ plot_emigration_components <- function(clado_events_tables,
   
   return(p)
 }
-
 
 
 # #test
