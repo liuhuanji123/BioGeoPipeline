@@ -1,4 +1,4 @@
-#20250928
+#20250929
 # The pipeline consists of the following steps:
 # construction_tree: Constructs the phylogenetic tree.
 # rooting_tree: Roots the tree generated in the previous step.
@@ -24,7 +24,7 @@ convert_path_to_wsl <- function(win_path) {
 
 extract_family <- function(tip) {
   parts <- str_split_fixed(tip, "_", 4)
-  parts[length(parts) - 1]  # The second-to-last element is the taxon name.
+  parts[,3]  # The second-to-last element is the taxon name.
 }
 
 #' @title Sanitize a string to be a valid filename
@@ -893,7 +893,7 @@ pastml_process_tree <- function(dated_tree_path,
   use.tree.tip <- use.tree$tip.label
   extract_realm <- function(tip) {
     parts <- str_split_fixed(tip, "_", 4)
-    parts[length(parts)] # The last element is the biogeographic realm.
+    parts[,4] # The last element is the biogeographic realm.
   }
   tips_realm <- sapply(use.tree.tip, extract_realm)
   location_path <- paste0(win_tree_dir, "/matched_location.csv")
@@ -1140,7 +1140,7 @@ run_biogeobears_pipeline <- function(tree_filepath,
   use.tree.tip <- use.tree$tip.label
   extract_realm <- function(tip) {
     parts <- str_split_fixed(tip, "_", 4)
-    parts[length(parts)] # The last element is the biogeographic realm.
+    parts[,4] # The last element is the biogeographic realm.
   }
   tips_realm <- sapply(use.tree.tip, extract_realm)
   tip_states_filepath <- paste0(save_biogeobears_path, "/matched_location.csv")
