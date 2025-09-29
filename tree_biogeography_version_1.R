@@ -1,4 +1,4 @@
-#20250929
+#20250930
 # The pipeline consists of the following steps:
 # construction_tree: Constructs the phylogenetic tree.
 # rooting_tree: Roots the tree generated in the previous step.
@@ -410,6 +410,59 @@ rooting_tree <- function(undated_tree, distantly_group,sister_group_family) {
   
   # Root the tree using the cleaned outgroup. resolve.root = TRUE ensures a bifurcating root, which is standard practice.
   rooted_tree <- root(pruned_tree, outgroup = my_outgroups, resolve.root = TRUE)
+
+  sister_mrca_node <- NULL # Initialize the node variable.
+  
+  if (length(sister_tips) > 1) {
+    # If the sister group has multiple members, use getMRCA.
+    sister_mrca_node <- ape::getMRCA(rooted_tree, sister_tips)
+    
+  } else if (length(sister_tips) == 1) {
+    # If the sister group is a single tip, find its corresponding node index directly.
+    # The which() function returns the position in tree$tip.label, which is the tip's node number.
+    sister_mrca_node <- which(rooted_tree$tip.label == sister_tips)
+    
+  } else {
+    stop("Error: The 'sister_tips' vector is empty.")
+  }
+  
+  if (is.null(sister_mrca_node) || length(sister_mrca_node) == 0) {
+    stop("Could not find the sister group node in the tree.")
+  }
+  
+  # Find the parent node of the sister clade's MRCA.
+  #    In tree$edge, column 2 lists all daughter nodes and column 1 lists their corresponding parent nodes.
+  parent_of_sister_node <- rooted_tree$edge[rooted_tree$edge[, 2] == sister_mrca_node, 1]
+  
+  if (length(parent_of_sister_node) == 0) {
+    # If the sister clade's MRCA is a direct child of the root, its parent is the root node itself.
+    parent_of_sister_node <- length(rooted_tree$tip.label) + 1
+  }
+  
+  # Define all tips that should be retained in the final tree.
+  #    First, get all descendants from the parent node (this includes all correct target + sister tips).
+  tips_from_correct_ingroup_clade <- phangorn::Descendants(rooted_tree, parent_of_sister_node, type="tips")
+  tips_from_correct_ingroup_clade <- rooted_tree$tip.label[unlist(tips_from_correct_ingroup_clade)]
+  
+  #    Then, combine them with the clean, distant outgroup tips.
+  tips_to_keep <- c(tips_from_correct_ingroup_clade, my_outgroups)
+  
+  # Identify "rogue" tips that are not in the 'tips_to_keep' list.
+  rogue_tips_to_prune <- setdiff(rooted_tree$tip.label, tips_to_keep)
+  
+  # If any rogue tips are found, prune them from the tree.
+  if (length(rogue_tips_to_prune) > 0) {
+    print("Found and pruning the following misplaced 'rogue' target tips:")
+    print(rogue_tips_to_prune)
+    
+    final_cleaned_tree <- ape::drop.tip(rooted_tree, rogue_tips_to_prune)
+    
+    print(paste("Successfully pruned", length(rogue_tips_to_prune), "rogue tips."))
+    
+  } else {
+    print("No rogue tips found. The tree structure is valid.")
+    final_cleaned_tree <- rooted_tree
+  }
   
   # Write the final rooted tree to a new file.
   file_dir  <- dirname(use_nwk_tree)
@@ -420,7 +473,7 @@ rooting_tree <- function(undated_tree, distantly_group,sister_group_family) {
                        sub("\\.nwk$", "_rooted.nwk", use_nwk_tree),
                        paste0(use_nwk_tree, "_rooted.nwk"))
   
-  write.tree(rooted_tree, file = rooted_file)
+  write.tree(final_cleaned_tree, file = rooted_file)
 }
 
 
