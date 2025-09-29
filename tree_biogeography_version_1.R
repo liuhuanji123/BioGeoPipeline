@@ -408,6 +408,11 @@ rooting_tree <- function(undated_tree, distantly_group,sister_group_family) {
   # Diagnose and prune the tree to ensure the outgroup is monophyletic.
   pruned_tree <- diagnose_and_prune_outgroup(use_tree, pure_tips, action = "prune")
   
+  if (length(sister_tips)>1){
+    pruned_tree <- diagnose_and_prune_outgroup(use_tree, sister_tips, action = "prune")
+    
+  }
+  
   # Root the tree using the cleaned outgroup. resolve.root = TRUE ensures a bifurcating root, which is standard practice.
   rooted_tree <- root(pruned_tree, outgroup = my_outgroups, resolve.root = TRUE)
 
