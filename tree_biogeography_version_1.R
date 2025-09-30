@@ -706,7 +706,7 @@ dating_tree <- function(rooted_tree_path, sister_group_family, num_sites = 11171
 # backbone_dated_path <- "C:/Users/16575/Documents/Rdocuments/test_20250703/Cleridae_test_20250718/Cleridae_1_backbone_rooted_dated_treePL.nwk"
 # reconstruction_path <- "C:/Users/16575/Documents/Rdocuments/test_20250703/Cleridae_test_20250718/Cleridae_1_reconstruction_rooted.nwk"
 
-fix_backbone_dating_to_reconstruction <- function(backbone_dated_path, reconstruction_path) {
+fix_backbone_dating_to_reconstruction <- function(backbone_dated_path, reconstruction_path, plot_result = TRUE, support_threshold = 50) {
   # backbone_dated_path: Path to the dated backbone tree.
   # reconstruction_path: Path to the un-dated reconstruction tree.
   # This function uses ape::chronos() to calibrate the reconstruction tree with node ages from the backbone tree.
@@ -776,17 +776,134 @@ fix_backbone_dating_to_reconstruction <- function(backbone_dated_path, reconstru
   
   print("Dating analysis completed!")
   
-  # 6. Visualize and save the results.
-  print("Step 4: Plotting and saving the final dated tree...")
+
+  dated_recon_tree<-dated_tree_chronos
   
-  # Plot the time-calibrated tree with a time axis.
-  plot(dated_tree_chronos, cex = 0.5)
-  axisPhylo()
-  title("Final Tree Dated with ape::chronos()")
+  # ---  Transfer Bootstrap Values from Backbone to Reconstruction Tree ---
+  print("Step 4: Transferring bootstrap support values from backbone...")
+  
+  if (is.null(dated_recon_tree$node.label)) dated_recon_tree$node.label <- rep("", dated_recon_tree$Nnode)
+  if (is.null(backbone_tree$node.label)) stop("Backbone tree is missing bootstrap values (node labels).")
+  
+  support_origin <- rep("barcode", dated_recon_tree$Nnode) 
+  
+  for (i in 1:backbone_tree$Nnode) {
+    backbone_node_id <- length(backbone_tree$tip.label) + i
+    tips_subset <- ape::extract.clade(backbone_tree, backbone_node_id)$tip.label
+    
+    if (length(tips_subset) > 1 && all(tips_subset %in% dated_recon_tree$tip.label)) {
+      recon_node_id <- ape::getMRCA(dated_recon_tree, tips_subset)
+      
+      if (!is.null(recon_node_id)) {
+        backbone_bs_value <- backbone_tree$node.label[i]
+        
+        recon_node_label_idx <- recon_node_id - length(dated_recon_tree$tip.label)
+        dated_recon_tree$node.label[recon_node_label_idx] <- backbone_bs_value
+        support_origin[recon_node_label_idx] <- "mitogenome"
+      }
+    }
+  }
+  print("Bootstrap transfer completed.")
+  
+  # --- NEW: Optional and Enhanced Plotting ---
+  if (plot_result) {
+    print("Step 5: Generating detailed, annotated plot for Supplementary Material...")
+    
+    # --- Part A: Differentiate branch types (backbone vs. barcode-only) ---
+    
+    # This assumes your mitogenome-derived tips have a unique identifier, e.g., "MMG_" prefix.
+    # !!! IMPORTANT: You may need to adapt this line to match your tip naming convention.
+    backbone_tip_names <- dated_recon_tree$tip.label[grepl("^MMG_", dated_recon_tree$tip.label)]
+    
+    # Create a vector to store the color for each edge (branch)
+    edge_colors <- rep("red3", nrow(dated_recon_tree$edge)) # Default color for barcode-only branches
+    
+    # Iterate through each edge to determine its type
+    for (i in 1:nrow(dated_recon_tree$edge)) {
+      daughter_node <- dated_recon_tree$edge[i, 2]
+      
+      # Get all descendant tips for the current branch
+      descendant_tips <- NULL
+      if (daughter_node <= length(dated_recon_tree$tip.label)) {
+        # The branch leads directly to a single tip
+        descendant_tips <- dated_recon_tree$tip.label[daughter_node]
+      } else {
+        # The branch leads to an internal node
+        descendant_tips <- ape::extract.clade(dated_recon_tree, daughter_node)$tip.label
+      }
+      
+      # If ANY descendant tip is from the original mitogenome backbone, 
+      # then this branch is considered a backbone branch.
+      if (any(descendant_tips %in% backbone_tip_names)) {
+        edge_colors[i] <- "black" # Color for backbone branches
+      }
+    }
+    
+    # --- Part B: Prepare node support labels and colors ---
+    
+    # Use different colors for support values based on their origin
+    node_support_colors <- ifelse(support_origin == "mitogenome", "blue", "darkgreen")
+    
+    # Prepare bootstrap values for plotting (only those above the threshold)
+    bs_values <- as.numeric(dated_recon_tree$node.label)
+    bs_to_plot <- ifelse(bs_values >= support_threshold, bs_values, "")
+    
+    # --- Part C: Generate the Plot (Adaptive Sizing Version) ---
+    print("Step 5: Generating final annotated plot with adaptive sizing...")
+    
+    # --- START OF ADAPTIVE SIZING LOGIC ---
+    
+    # 1. Calculate a dynamic height based on the number of tips.
+    #    This allocates a small amount of vertical space (e.g., 0.1 inches) to each tip.
+    #    A base height (e.g., 10 inches) is added to ensure smaller trees are also readable.
+    plot_height <- 10 + (Ntip(dated_recon_tree) * 0.1)
+    
+    # 2. Calculate a dynamic width based on the tree's depth (total time).
+    #    This allocates horizontal space for the time axis.
+    tree_depth <- max(ape::branching.times(dated_recon_tree))
+    plot_width <- 10 + (tree_depth / 10) # Allocate 1 inch for every 10 million years.
+    
+    # 3. Calculate a dynamic font size (cex) to prevent labels from being too large or small.
+    #    This formula reduces the font size as the number of tips increases.
+    font_cex <- max(0.2, 1 - (Ntip(dated_recon_tree) / 1000))
+    
+    output_pdf_path <- file.path(output_dir, paste0(tools::file_path_sans_ext(basename(reconstruction_path)), "_annotated_detailed.pdf"))
+
+    # Use the dynamically calculated dimensions.
+    # The 'while' loop is good practice to close any stray open devices.
+    while (!is.null(dev.list())) {
+      dev.off()
+    }
+    pdf(output_pdf_path, width = plot_width, height = plot_height)
+    
+    # Plot the tree using the dynamic font size
+    plot(dated_recon_tree, 
+         type = "phylogram",
+         show.tip.label = TRUE,
+         edge.color = edge_colors,
+         edge.width = 0.7,
+         cex = font_cex)  # Use the dynamic font size
+    
+    axisPhylo()
+    
+    title(main = "Time-Calibrated Phylogeny with Tiered Node Support and Branch Provenance", 
+          sub = "Branches: Black=Backbone, Red=Barcode-only | Support (BS >= 50%): Blue=Mito, Green=Barcode",
+          cex.main = 1.2, cex.sub = 1.0, line = 2)
+    
+    # Use a slightly smaller font for node labels
+    nodelabels(text = bs_to_plot, 
+               frame = "none", 
+               cex = font_cex * 0.8, # Base node label size on the tip label size
+               col = node_support_colors)
+    
+    dev.off()
+    print(paste("Detailed adaptive-sized plot saved to:", output_pdf_path))
+  }
+  
   
   # Save the final dated tree to a file.
   output_path <- file.path(output_dir, paste0(tools::file_path_sans_ext(basename(reconstruction_path)), "_dated_chronos.nwk"))
-  ape::write.tree(dated_tree_chronos, file = output_path)
+  ape::write.tree(dated_recon_tree, file = output_path)
   
   print(paste("Final dated tree has been saved to:", output_path))
   
@@ -795,8 +912,6 @@ fix_backbone_dating_to_reconstruction <- function(backbone_dated_path, reconstru
 # Execute the function to date the reconstruction tree using the backbone's ages.
 # fix_backbone_dating_to_reconstruction(backbone_dated_path = backbone_dated_path,
 #                                       reconstruction_path = reconstruction_path)
-
-
 
 
 
