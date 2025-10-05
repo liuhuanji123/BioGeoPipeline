@@ -724,13 +724,27 @@ fix_backbone_dating_to_reconstruction <- function(backbone_dated_path, reconstru
   backbone_tree <- read.tree(backbone_dated_tree_path)
   recon_tree <- read.tree(reconstruction_undating_tree_path)
   
+  if (any(backbone_tree$edge.length <=1e-8)) {
+    cat("  - Found and fixed tiny/zero-length branches in the backbone tree.\n")
+    backbone_tree$edge.length[backbone_tree$edge.length <= 1e-8] <- 1e-8
+  }
+  
+  if (any(recon_tree$edge.length <= 1e-8)) {
+    cat("  - Found and fixed tiny/zero-length branches in the reconstruction tree.\n")
+    recon_tree$edge.length[recon_tree$edge.length <= 1e-8] <- 1e-6
+  }
+  
   # 4. Prepare the calibration data frame for chronos().
   print("Step 2: Preparing calibration data for chronos()...")
   
   # a) Get node age information from the dated backbone tree.
   backbone_ages_map <- setNames(ape::branching.times(backbone_tree),
                                 (length(backbone_tree$tip.label) + 1):(length(backbone_tree$tip.label) + backbone_tree$Nnode))
-  
+  if (any(backbone_ages_map < 0)) {
+    num_neg_nodes <- sum(backbone_ages_map < 0)
+    cat(paste("  - Found", num_neg_nodes, "node(s) with negative age in backbone_tree, likely due to numerical precision. Fixing to 1e-6.\n"))
+    backbone_ages_map[backbone_ages_map < 0] <- 1e-6
+  }
   # b) Create an empty data frame for calibrations.
   # The required format for chronos is: node, age.min, age.max, soft.bounds
   calib_df <- data.frame()
@@ -766,17 +780,92 @@ fix_backbone_dating_to_reconstruction <- function(backbone_dated_path, reconstru
   calib_df <- calib_df[!duplicated(calib_df$node), ]
   
   print(paste("Successfully prepared", nrow(calib_df), "calibration points for chronos()."))
+
+  print("Step: Diagnosing and filtering conflicting calibration points...")
+  
+  # Conflicts can only exist if there is more than one calibration point.
+  if (nrow(calib_df) > 1) {
+    # For efficient lookup, create a named vector of node ages.
+    nodes_to_check <- calib_df$node
+    ages <- calib_df$age.min
+    names(ages) <- nodes_to_check
+    
+    # Initialize a vector to store all nodes involved in conflicts.
+    conflicting_nodes <- c()
+    
+    # Iterate through each calibration point, treating it as a potential ancestor.
+    for (i in 1:length(nodes_to_check)) {
+      ancestor_node <- nodes_to_check[i]
+      ancestor_age <- ages[as.character(ancestor_node)]
+      
+      # Find all descendant nodes for the current ancestor in the reconstruction tree.
+      # Requires the 'phangorn' package. Ensure it's installed.
+      descendant_nodes <- phangorn::Descendants(recon_tree, ancestor_node, type = "all")
+      
+      # We are only interested in descendants that are also in our calibration list.
+      calibrated_descendants <- intersect(descendant_nodes, nodes_to_check)
+      
+      # If any such descendants are found...
+      if (length(calibrated_descendants) > 0) {
+        # Get the ages of these calibrated descendants.
+        descendant_ages <- ages[as.character(calibrated_descendants)]
+        
+        # Check for the paradox: "descendant is older than the ancestor".
+        if (any(descendant_ages > ancestor_age)) {
+          # If a paradox is found, record both the ancestor and all offending descendant nodes.
+          conflicting_descendants <- calibrated_descendants[descendant_ages > ancestor_age]
+          conflicting_nodes <- c(conflicting_nodes, ancestor_node, conflicting_descendants)
+        }
+      }
+    }
+    
+    # Get the unique list of all nodes that need to be removed.
+    conflicting_nodes <- unique(conflicting_nodes)
+    
+    if (length(conflicting_nodes) > 0) {
+      print(paste("  - Found", length(conflicting_nodes), "conflicting calibration points. They will be removed."))
+      # Remove all conflicting nodes from the calibration dataframe to get a "clean" version.
+      calib_df_cleaned <- calib_df[!calib_df$node %in% conflicting_nodes, ]
+    } else {
+      # If no conflicts are found, use the original calibration dataframe.
+      calib_df_cleaned <- calib_df
+    }
+    
+    print(paste("  - Retaining", nrow(calib_df_cleaned), "non-conflicting calibration points for dating."))
+  } else {
+    # If there is only one or zero calibration points, no conflicts are possible.
+    calib_df_cleaned <- calib_df 
+  }
   
   # 5. Run the chronos() function to perform dating.
   print("Step 3: Running chronos() dating analysis... This may take some time.")
   
-  # lambda = 1 is a common value for the smoothing parameter.
-  # model = "correlated" specifies the commonly used correlated rates model.
-  dated_tree_chronos <- ape::chronos(recon_tree, lambda = 1, model = "correlated", calibration = calib_df)
+  # First, prepare the "fallback" calibration dataframe with soft bounds.
+  calib_df_soft <- calib_df_cleaned
+  calib_df_soft$age.min <- calib_df_cleaned$age.min * 0.95
+  calib_df_soft$age.max <- calib_df_cleaned$age.max * 1.05
+  calib_df_soft$soft.bounds <- TRUE
   
+  dated_tree_chronos <- tryCatch({
+    
+    # --- Attempt A: First, try dating with strict hard constraints ---
+    cat("  - Attempt 1: Running chronos with hard constraints...\n")
+    ape::chronos(recon_tree, lambda = 1, model = "correlated", calibration = calib_df_cleaned)
+    
+  }, error = function(e) {
+    
+    # --- Attempt B (Fallback): If Attempt A fails, execute this block ---
+    cat("  - WARNING: Dating with hard constraints failed. The error was:\n")
+    cat(paste("    ", e$message, "\n"))
+    cat("  - Attempt 2 (Fallback): Now trying again with flexible soft constraints...\n")
+    
+    # Use the prepared dataframe with soft constraints.
+    ape::chronos(recon_tree, lambda = 1, model = "correlated", calibration = calib_df_soft)
+    
+  }) # End of tryCatch block
+
   print("Dating analysis completed!")
   
-
   dated_recon_tree<-dated_tree_chronos
   
   # ---  Transfer Bootstrap Values from Backbone to Reconstruction Tree ---
