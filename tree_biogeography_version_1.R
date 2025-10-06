@@ -1,4 +1,4 @@
-#20251005
+#20251006
 # The pipeline consists of the following steps:
 # construction_tree: Constructs the phylogenetic tree.
 # rooting_tree: Roots the tree generated in the previous step.
@@ -1103,6 +1103,16 @@ cal_transition_rate_tab <- function(named_tree_path, probabilities_filepath) {
   
   print("Transition Rate Matrix (Avg. Probability Contribution / Myr):")
   print(round(transition_rate_matrix_per_myr, 6))
+  
+  # --- NEW STEP: Save the rate matrix to a CSV file ---
+  # Construct the CSV filename based on the input probabilities filename.
+  csv_total_save_path <- sub("\\_probabilities.tab$", "_transition_total.csv", probabilities_filepath)
+  csv_save_path <- sub("\\_probabilities.tab$", "_transition_rates.csv", probabilities_filepath)
+  
+  # write.csv needs a data frame. We also want to keep the row names ('from' states).
+  write.csv(as.data.frame(total_transition_contributions), file = csv_total_save_path, quote = FALSE)
+  write.csv(as.data.frame(transition_rate_matrix_per_myr), file = csv_save_path, quote = FALSE)
+  print(paste("Transition rate matrix saved to:", csv_save_path))
   
   # Visualization (e.g., heatmap).
   save_path <- sub("\\_probabilities.tab$", "_transition_plots.png", probabilities_filepath)
