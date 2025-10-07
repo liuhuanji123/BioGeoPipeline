@@ -1,4 +1,4 @@
-#20251006
+#20251007
 # The pipeline consists of the following steps:
 # construction_tree: Constructs the phylogenetic tree.
 # rooting_tree: Roots the tree generated in the previous step.
@@ -372,7 +372,7 @@ rooting_tree <- function(undated_tree, distantly_group,sister_group_family) {
   # distantly_group: A list defining the distant taxa to be used for rooting.
   
   use_nwk_tree <- undated_tree
-  
+
   print(use_nwk_tree)
   use_tree <- read.tree(use_nwk_tree)
   original_tips <- use_tree$tip.label
@@ -415,7 +415,7 @@ rooting_tree <- function(undated_tree, distantly_group,sister_group_family) {
   
   # Root the tree using the cleaned outgroup. resolve.root = TRUE ensures a bifurcating root, which is standard practice.
   rooted_tree <- root(pruned_tree, outgroup = my_outgroups, resolve.root = TRUE)
-  
+
   sister_mrca_node <- NULL # Initialize the node variable.
   
   if (length(sister_tips) > 1) {
@@ -780,7 +780,7 @@ fix_backbone_dating_to_reconstruction <- function(backbone_dated_path, reconstru
   calib_df <- calib_df[!duplicated(calib_df$node), ]
   
   print(paste("Successfully prepared", nrow(calib_df), "calibration points for chronos()."))
-  
+
   print("Step: Diagnosing and filtering conflicting calibration points...")
   
   # Conflicts can only exist if there is more than one calibration point.
@@ -863,7 +863,7 @@ fix_backbone_dating_to_reconstruction <- function(backbone_dated_path, reconstru
     ape::chronos(recon_tree, lambda = 1, model = "correlated", calibration = calib_df_soft)
     
   }) # End of tryCatch block
-  
+
   print("Dating analysis completed!")
   
   dated_recon_tree<-dated_tree_chronos
@@ -957,7 +957,7 @@ fix_backbone_dating_to_reconstruction <- function(backbone_dated_path, reconstru
     font_cex <- max(0.2, 1 - (Ntip(dated_recon_tree) / 1000))
     
     output_pdf_path <- file.path(output_dir, paste0(tools::file_path_sans_ext(basename(reconstruction_path)), "_annotated_detailed.pdf"))
-    
+
     # Use the dynamically calculated dimensions.
     # The 'while' loop is good practice to close any stray open devices.
     while (!is.null(dev.list())) {
@@ -1347,7 +1347,7 @@ pastml_process_tree <- function(dated_tree_path,
     'wsl %s --tree "%s" --data "%s" --columns "%s" --id_index 0 --prediction_method ALL --data_sep "," --work_dir "%s" --html_mixed "%s" --out_data "%s" ',
     pastml_path,wsl_tree, wsl_location, safe_feature, wsl_ALL_work_dir, wsl_ALL_html_out, wsl_ALL_csv_out
   )
-  
+
   system(cmd_all, intern = TRUE)
   
   print(paste0(tree_name, " finished"))
@@ -1528,7 +1528,7 @@ run_biogeobears_pipeline <- function(tree_filepath,
   
   # Check for any tree tips that are missing from the state file (should not happen after the previous step, but is a good safeguard).
   missing_tips <- base::setdiff(tip_labels_orig, unique(tip_states_data$node))
-  
+
   if (length(missing_tips) > 0) {
     # warning("The following tips in the tree have no state data: ", paste(missing_tips, collapse=", "))
     # stop("Cannot proceed with tips missing geographic data. Please provide complete data or prune the tree/data accordingly.")
@@ -1635,7 +1635,7 @@ run_biogeobears_pipeline <- function(tree_filepath,
   }
   print(paste("Temporary geography data written to:", geog_fn_temp))
   print("-------------------------------------------------")
-  
+
   # --- 4. Processing the Phylogenetic Tree ---
   print("--- 4. Processing phylogenetic tree ---")
   tr_processed <- cs_tree # Start with the tree loaded in the previous step.
@@ -2472,7 +2472,7 @@ biogeobears_transition_matrices <- function(best_model_results,
   # Requires the 'MultinomialCI' package.
   library(MultinomialCI)
   check_ML_vs_BSM_fn <- paste0(savedir, "/", sanitize_filename(model_name), "_ML_vs_BSM_check.pdf")
-  
+
   # Ensure that the cladogenetic event tables list contains valid data frames.
   if (length(clado_events_tables_src) > 0 && inherits(clado_events_tables_src[[1]], "data.frame")) {
     check_ML_vs_BSM(res = res,
@@ -2482,7 +2482,7 @@ biogeobears_transition_matrices <- function(best_model_results,
                     plot_each_node = FALSE,
                     linreg_plot = TRUE,
                     MultinomialCI = TRUE)
-    
+
   } else {
     plot(1, 1, type = "n", xlab = "", ylab = "", main = "Could not generate ML vs BSM plot:\n'clado_events_tables_src' is invalid")
     text(1, 1, "'clado_events_tables_src' may be empty or incorrectly formatted.")
@@ -2595,14 +2595,14 @@ biogeobears_transition_matrices <- function(best_model_results,
   avg_j_timeslice_rate_list <- mapply("/", avg_j_timeslice_list, durations_Ma, SIMPLIFY = FALSE)
   avg_total_timeslice_rate_list <- mapply("/", avg_total_timeslice_list, durations_Ma, SIMPLIFY = FALSE)
   
-  # 组合成一个列表
+  # list
   timeslice_rate_results <- list(
     d_rate = avg_d_timeslice_rate_list,
     j_rate = avg_j_timeslice_rate_list,
     total_rate = avg_total_timeslice_rate_list
   )
   
-  # 保存到一个 RDS 文件
+  # rds 
   clado_events_fn <- file.path(savedir, paste0(model_name, "_avg_timeslice_rate_results.rds"))
   saveRDS(timeslice_rate_results, clado_events_fn)
   
@@ -2661,10 +2661,8 @@ biogeobears_transition_matrices <- function(best_model_results,
       )
   }
   
-  # =========================================================================
   # Generate and Save All Plots (Both Global and Independent Scales)
-  # =========================================================================
-  
+
   # --- C. Calculate the SINGLE, GLOBAL color scale ---
   # This part remains the same.
   all_rates <- unlist(c(avg_d_timeslice_rate_list, avg_j_timeslice_rate_list))
@@ -2786,7 +2784,7 @@ biogeobears_transition_matrices <- function(best_model_results,
   cat("Supplementary plot (Immigration Components d vs j) saved.\n")
   
   # --- Supplementary Figure 2 ---
-  save_data_path_supp2<-file.path(savedir, paste0(model_name, "_supp_Emigration_Components.png"))
+  save_data_path_supp2<-file.path(savedir, paste0(model_name, "_supp_Emigration_Components.rds"))
   supp_plot2 <- plot_emigration_components(
     clado_events_tables = clado_events_tables_src,
     ana_events_tables = ana_events_tables_src,
@@ -2796,19 +2794,17 @@ biogeobears_transition_matrices <- function(best_model_results,
   ggsave(file.path(savedir, paste0(model_name, "_supp_Emigration_Components.png")), 
          plot = supp_plot2, width = 12, height = 8, dpi = 300)
   cat("Supplementary plot (Emigration Components d vs j) saved.\n")
-  
-  
+
   save_data_path_details<-file.path(savedir, paste0(model_name, "_transition_details.rds"))
   family_name <- sub("_.*", "", basename(savedir))
-  extract_and_save_inter_realm_events <- function(clado_events_tables = clado_events_tables_src, 
-                                                  ana_events_tables  = ana_events_tables_src,
-                                                  family_name=family_name,
-                                                  tree_age =tree_age, 
-                                                  bin_size = binning_size,
-                                                  save_path = save_data_path_details)
-    
-    
-    cat("\nBioGeoBEARS visualization finished. All 6 plot files generated.\n")
+  extract_and_save_inter_realm_events(clado_events_tables = clado_events_tables_src, 
+                                      ana_events_tables  = ana_events_tables_src,
+                                      family_name=family_name,
+                                      tree_age =tree_age, 
+                                      bin_size = binning_size,
+                                      save_path = save_data_path_details)
+
+  cat("\nBioGeoBEARS visualization finished. All 6 plot files generated.\n")
   
   
 }
@@ -2991,7 +2987,7 @@ plot_immigration_emigration_trends <- function(clado_events_tables,
         mutate(time_bin = cut(time, breaks = time_breaks, labels = time_labels, right = FALSE)) %>%
         filter(!is.na(time_bin)) %>%
         group_by(time_bin, area) %>% 
-        summarise(count = dplyr::n(), .groups = 'drop') %>% # 【关键修正】
+        summarise(count = dplyr::n(), .groups = 'drop') %>% 
         mutate(event_type = "Immigration")
     } else {
       imm_counts <- data.frame(time_bin=factor(), area=character(), count=integer(), event_type=character())
@@ -3012,7 +3008,7 @@ plot_immigration_emigration_trends <- function(clado_events_tables,
         mutate(time_bin = cut(time, breaks = time_breaks, labels = time_labels, right = FALSE)) %>%
         filter(!is.na(time_bin) & !is.na(area)) %>%
         group_by(time_bin, area) %>% 
-        summarise(count = dplyr::n(), .groups = 'drop') %>% # 【关键修正】
+        summarise(count = dplyr::n(), .groups = 'drop') %>% 
         mutate(event_type = "Emigration")
     } else {
       emi_counts <- data.frame(time_bin=factor(), area=character(), count=integer(), event_type=character())
@@ -3043,7 +3039,7 @@ plot_immigration_emigration_trends <- function(clado_events_tables,
     mutate(time_mid = as.numeric(sub("-.*", "", time_bin)) + (bin_size / 2))
   
   saveRDS(final_summary,file = save_data_path)
-  
+
   p <- ggplot(final_summary, aes(x = time_mid, y = mean_events, color = event_type, fill = event_type)) +
     geom_ribbon(aes(ymin = lower_q, ymax = upper_q), alpha = 0.2, linetype = 0) +
     geom_line(size = 1) +
@@ -3090,7 +3086,7 @@ plot_immigration_components <- function(clado_events_tables,
         mutate(time_bin = cut(time, breaks = time_breaks, labels = time_labels, right = FALSE)) %>%
         filter(!is.na(time_bin)) %>%
         group_by(time_bin, area, event_type) %>% 
-        summarise(count = dplyr::n(), .groups = 'drop') # 【关键修正】
+        summarise(count = dplyr::n(), .groups = 'drop') 
       
       if(nrow(sim_results) > 0) {
         sim_results$sim_id <- i
@@ -3164,7 +3160,7 @@ plot_emigration_components <- function(clado_events_tables,
         mutate(time_bin = cut(time, breaks = time_breaks, labels = time_labels, right = FALSE)) %>%
         filter(!is.na(time_bin) & !is.na(area)) %>%
         group_by(time_bin, area, event_type) %>% 
-        summarise(count = dplyr::n(), .groups = 'drop') # 【关键修正】
+        summarise(count = dplyr::n(), .groups = 'drop') 
       
       if(nrow(sim_results) > 0) {
         sim_results$sim_id <- i
@@ -3207,7 +3203,7 @@ plot_emigration_components <- function(clado_events_tables,
 
 
 
-# 加载必要的R包
+# Load necessary R packages
 library(dplyr)
 library(tidyr)
 
@@ -3232,19 +3228,20 @@ extract_and_save_inter_realm_events <- function(clado_events_tables,
                                                 bin_size,
                                                 save_path) {
   
-  # --- 1. 定义时间分箱 ---
+  # --- 1. Define time bins ---
   time_breaks <- seq(0, ceiling(tree_age / bin_size) * bin_size, by = bin_size)
   time_labels <- paste(time_breaks[-length(time_breaks)], time_breaks[-1], sep="-")
   num_sims <- length(clado_events_tables)
   
-  # --- 2. 遍历每次BSM模拟，提取事件清单 ---
+  # --- 2. Iterate through each BSM simulation to extract the event list ---
   events_from_all_sims <- lapply(1:num_sims, function(i) {
     clado_table <- clado_events_tables[[i]]
     ana_table <- ana_events_tables[[i]]
     
+    # A list to store 'd' and 'j' events for the current simulation
     events_this_sim <- list()
     
-    # 提取 'd' 事件 (Anagenetic)
+    # Extract 'd' events (Anagenetic)
     if (is.data.frame(ana_table) && nrow(ana_table) > 0) {
       events_this_sim[['d']] <- ana_table %>%
         filter(event_type == "d") %>%
@@ -3254,7 +3251,7 @@ extract_and_save_inter_realm_events <- function(clado_events_tables,
         mutate(event_type = "d")
     }
     
-    # 提取 'j' 事件 (Cladogenetic)
+    # Extract 'j' events (Cladogenetic)
     if (is.data.frame(clado_table) && nrow(clado_table) > 0) {
       events_this_sim[['j']] <- clado_table %>%
         filter(clado_event_type == "founder (j)") %>%
@@ -3264,6 +3261,7 @@ extract_and_save_inter_realm_events <- function(clado_events_tables,
         mutate(event_type = "j")
     }
     
+    # Combine all events for the current simulation
     if (length(events_this_sim) > 0) {
       bind_rows(events_this_sim) %>% mutate(map_num = i)
     } else {
@@ -3271,22 +3269,22 @@ extract_and_save_inter_realm_events <- function(clado_events_tables,
     }
   })
   
-  # --- 3. 汇总、清理并格式化数据 ---
+  # --- 3. Aggregate, clean, and format the data ---
   final_df <- bind_rows(events_from_all_sims) %>%
-    # 清理无效事件
+    # Clean up invalid events (e.g., missing source or target)
     filter(!is.na(source_realm), !is.na(target_realm), 
            source_realm != "", target_realm != "",
            source_realm != "NA", target_realm != "NA") %>%
-    # 添加 Family 身份标签和时间分箱
+    # Add family identifier and assign time bins
     mutate(
       family = family_name,
       time_bin = cut(event_time, breaks = time_breaks, labels = time_labels, right = FALSE)
     ) %>%
     filter(!is.na(time_bin)) %>%
-    # 整理成最终需要的格式
+    # Reorder columns to the final desired format
     select(family, map_num, event_type, event_time, time_bin, source_realm, target_realm)
   
-  # --- 4. 保存数据 ---
+  # --- 4. Save the data ---
   if (nrow(final_df) > 0) {
     cat("Saving", nrow(final_df), "inter-realm events for", family_name, "to:", save_path, "\n")
     saveRDS(final_df, file = save_path)
@@ -3294,9 +3292,9 @@ extract_and_save_inter_realm_events <- function(clado_events_tables,
     warning("No valid inter-realm dispersal events found for family: ", family_name)
   }
   
+  # --- 5. (Optional) Return the dataframe invisibly ---
   invisible(final_df)
 }
-
 
 
 
@@ -3337,7 +3335,7 @@ tree_biogeography_pipeline<-function(allsequences_path,
                                      dispersal_multipliers_filepath = dispersal_multipliers_filepath){
   output_dir <- dirname(allsequences_path)
   base_name <- sub("\\.fasta$", "", basename(allsequences_path))
-  
+
   # Define output file names.
   backbone_tree_path <- file.path(output_dir, paste0(base_name, "_backbone.nwk"))
   final_tree_path <- file.path(output_dir, paste0(base_name, "_reconstruction.nwk"))
@@ -3355,7 +3353,7 @@ tree_biogeography_pipeline<-function(allsequences_path,
                     construction_model=construction_model
   )
   
-  
+
   
   rooting_tree(undated_tree = backbone_tree_path,
                distantly_group = distantly_group,
@@ -3364,7 +3362,7 @@ tree_biogeography_pipeline<-function(allsequences_path,
                distantly_group = distantly_group,
                sister_group_family = sister_group_family)
   
-  
+
   
   
   dating_tree(rooted_tree_path = backbone_rooted_file,
