@@ -1511,7 +1511,7 @@ run_biogeobears_pipeline <- function(tree_filepath,
   # Here we assume the geography data is the master list; prune any tips from the tree that are not in this list.
   tip_labels_orig <- cs_tree$tip.label
   tips_to_delete <- setdiff(tip_labels_orig, cs_states_raw$node)
-  if(length(tips_to_delete > 0)) {
+  if(length(tips_to_delete) > 0) {
     cs_tree <- drop.tip(cs_tree, tips_to_delete)
   }
   
@@ -3424,6 +3424,7 @@ tree_biogeography_pipeline<-function(allsequences_path,
 #                            timeperiods_filepath = timeperiods_filepath,
 #                            dispersal_multipliers_filepath = dispersal_multipliers_filepath,
 #                            construction_model = "GTR+G")
+
 
 
 
