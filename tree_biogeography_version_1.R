@@ -409,7 +409,7 @@ rooting_tree <- function(undated_tree, distantly_group,sister_group_family) {
   pruned_tree <- diagnose_and_prune_outgroup(use_tree, pure_tips, action = "prune")
   
   if (length(sister_tips)>1){
-    pruned_tree <- diagnose_and_prune_outgroup(use_tree, sister_tips, action = "prune")
+    pruned_tree <- diagnose_and_prune_outgroup(pruned_tree, sister_tips, action = "prune")
     
   }
   
@@ -3424,5 +3424,6 @@ tree_biogeography_pipeline<-function(allsequences_path,
 #                            timeperiods_filepath = timeperiods_filepath,
 #                            dispersal_multipliers_filepath = dispersal_multipliers_filepath,
 #                            construction_model = "GTR+G")
+
 
 
