@@ -1909,10 +1909,12 @@ run_biogeobears_pipeline <- function(tree_filepath,
       run_object$BioGeoBEARS_model_object@params_table["s", "type"] <- "fixed"
       run_object$BioGeoBEARS_model_object@params_table["s", "init"] <- 0.0
       run_object$BioGeoBEARS_model_object@params_table["v", "type"] <- "free"
+      run_object$BioGeoBEARS_model_object@params_table["v", "init"] <- 1.0
     } else if (model_name == "DIVALIKE+J") {
       run_object$BioGeoBEARS_model_object@params_table["s", "type"] <- "fixed"
       run_object$BioGeoBEARS_model_object@params_table["s", "init"] <- 0.0
       run_object$BioGeoBEARS_model_object@params_table["v", "type"] <- "free"
+      run_object$BioGeoBEARS_model_object@params_table["v", "init"] <- 1.0
       run_object$BioGeoBEARS_model_object@params_table["j", "type"] <- "free"
       run_object$BioGeoBEARS_model_object@params_table["j", "init"] <- 0.01
       run_object$BioGeoBEARS_model_object@params_table["j", "max"] <- 1.99999 # Max is typically 2 for DIVALIKE+J.
