@@ -1,4 +1,4 @@
-#20251007
+#20260107
 # The pipeline consists of the following steps:
 # construction_tree: Constructs the phylogenetic tree.
 # rooting_tree: Roots the tree generated in the previous step.
@@ -2538,7 +2538,7 @@ biogeobears_transition_matrices <- function(best_model_results,
     # Tally d-type (anagenetic) events.
     events_table <- ana_events_tables_src[[i]]
     if (is.data.frame(events_table) && nrow(events_table) > 0) {
-      d_events <- events_table[events_table$event_type == "d", ]
+      d_events <- events_table[which(events_table$event_type == "d"), ]
       if (nrow(d_events) > 0) {
         for (k in 1:nrow(d_events)) {
           event <- d_events[k, ]
@@ -2562,7 +2562,7 @@ biogeobears_transition_matrices <- function(best_model_results,
     # Tally j-type (cladogenetic) events.
     clado_table <- clado_events_tables_src[[i]]
     if (is.data.frame(clado_table) && nrow(clado_table) > 0) {
-      j_events <- clado_table[clado_table$clado_event_type == "founder (j)", ]
+      j_events <- clado_table[which(clado_table$clado_event_type == "founder (j)"), ]
       if (nrow(j_events) > 0) {
         for (k in 1:nrow(j_events)) {
           event <- j_events[k, ]
@@ -2976,11 +2976,11 @@ plot_immigration_emigration_trends <- function(clado_events_tables,
     
     events_in_list <- list()
     if(is.data.frame(ana_table) && nrow(ana_table) > 0) {
-      d_in_subset <- ana_table %>% filter(event_type == "d") %>% select(time=abs_event_time, area=dispersal_to)
+      d_in_subset <- ana_table %>% filter(!is.na(event_type) & event_type == "d") %>% select(time=abs_event_time, area=dispersal_to)
       if(nrow(d_in_subset) > 0) events_in_list[['d']] <- d_in_subset
     }
     if(is.data.frame(clado_table) && nrow(clado_table) > 0) {
-      j_in_subset <- clado_table %>% filter(clado_event_type == "founder (j)") %>% select(time=time_bp, area=clado_dispersal_to)
+      j_in_subset <- clado_table %>% filter(!is.na(clado_event_type) & clado_event_type == "founder (j)") %>% select(time=time_bp, area=clado_dispersal_to)
       if(nrow(j_in_subset) > 0) events_in_list[['j']] <- j_in_subset
     }
     
@@ -2997,11 +2997,11 @@ plot_immigration_emigration_trends <- function(clado_events_tables,
     
     events_out_list <- list()
     if(is.data.frame(ana_table) && nrow(ana_table) > 0) {
-      d_out_subset <- ana_table %>% filter(event_type == "d") %>% select(time=abs_event_time, area=ana_dispersal_from)
+      d_out_subset <- ana_table %>% filter(!is.na(event_type) & event_type == "d") %>% select(time=abs_event_time, area=ana_dispersal_from)
       if(nrow(d_out_subset) > 0) events_out_list[['d']] <- d_out_subset
     }
     if(is.data.frame(clado_table) && nrow(clado_table) > 0) {
-      j_out_subset <- clado_table %>% filter(clado_event_type == "founder (j)") %>% select(time=time_bp, area=clado_dispersal_from)
+      j_out_subset <- clado_table %>% filter(!is.na(clado_event_type) & clado_event_type == "founder (j)") %>% select(time=time_bp, area=clado_dispersal_from)
       if(nrow(j_out_subset) > 0) events_out_list[['j']] <- j_out_subset
     }
     
@@ -3075,11 +3075,11 @@ plot_immigration_components <- function(clado_events_tables,
     
     events_in_list <- list()
     if(is.data.frame(ana_table) && nrow(ana_table) > 0) {
-      d_in_subset <- ana_table %>% filter(event_type == "d") %>% select(time=abs_event_time, area=dispersal_to) %>% mutate(event_type="d (Range Expansion)")
+      d_in_subset <- ana_table %>% filter(!is.na(event_type) & event_type == "d") %>% select(time=abs_event_time, area=dispersal_to) %>% mutate(event_type="d (Range Expansion)")
       if(nrow(d_in_subset) > 0) events_in_list[['d']] <- d_in_subset
     }
     if(is.data.frame(clado_table) && nrow(clado_table) > 0) {
-      j_in_subset <- clado_table %>% filter(clado_event_type == "founder (j)") %>% select(time=time_bp, area=clado_dispersal_to) %>% mutate(event_type="j (Founder Event)")
+      j_in_subset <- clado_table %>% filter(!is.na(clado_event_type) & clado_event_type == "founder (j)") %>% select(time=time_bp, area=clado_dispersal_to) %>% mutate(event_type="j (Founder Event)")
       if(nrow(j_in_subset) > 0) events_in_list[['j']] <- j_in_subset
     }
     
@@ -3148,12 +3148,12 @@ plot_emigration_components <- function(clado_events_tables,
     
     events_out_list <- list()
     if(is.data.frame(ana_table) && nrow(ana_table) > 0) {
-      d_out_subset <- ana_table %>% filter(event_type == "d") %>% select(time=abs_event_time, area=ana_dispersal_from) %>% mutate(event_type="d (Range Expansion)")
+      d_out_subset <- ana_table %>% filter(!is.na(event_type) & event_type == "d") %>% select(time=abs_event_time, area=ana_dispersal_from) %>% mutate(event_type="d (Range Expansion)")
       if(nrow(d_out_subset) > 0) events_out_list[['d']] <- d_out_subset
     }
-    
+
     if(is.data.frame(clado_table) && nrow(clado_table) > 0) {
-      j_out_subset <- clado_table %>% filter(clado_event_type == "founder (j)") %>% select(time=time_bp, area=clado_dispersal_from) %>% mutate(event_type="j (Founder Event)")
+      j_out_subset <- clado_table %>% filter(!is.na(clado_event_type) & clado_event_type == "founder (j)") %>% select(time=time_bp, area=clado_dispersal_from) %>% mutate(event_type="j (Founder Event)")
       if(nrow(j_out_subset) > 0) events_out_list[['j']] <- j_out_subset
     }
     
@@ -3246,19 +3246,19 @@ extract_and_save_inter_realm_events <- function(clado_events_tables,
     # Extract 'd' events (Anagenetic)
     if (is.data.frame(ana_table) && nrow(ana_table) > 0) {
       events_this_sim[['d']] <- ana_table %>%
-        filter(event_type == "d") %>%
-        select(event_time = abs_event_time, 
-               source_realm = ana_dispersal_from, 
+        filter(!is.na(event_type) & event_type == "d") %>%
+        select(event_time = abs_event_time,
+               source_realm = ana_dispersal_from,
                target_realm = dispersal_to) %>%
         mutate(event_type = "d")
     }
-    
+
     # Extract 'j' events (Cladogenetic)
     if (is.data.frame(clado_table) && nrow(clado_table) > 0) {
       events_this_sim[['j']] <- clado_table %>%
-        filter(clado_event_type == "founder (j)") %>%
-        select(event_time = time_bp, 
-               source_realm = clado_dispersal_from, 
+        filter(!is.na(clado_event_type) & clado_event_type == "founder (j)") %>%
+        select(event_time = time_bp,
+               source_realm = clado_dispersal_from,
                target_realm = clado_dispersal_to) %>%
         mutate(event_type = "j")
     }
