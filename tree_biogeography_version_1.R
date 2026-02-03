@@ -1,4 +1,4 @@
-#20260203
+#20260204
 # The pipeline consists of the following steps:
 # construction_tree: Constructs the phylogenetic tree.
 # rooting_tree: Roots the tree generated in the previous step.
@@ -49,6 +49,391 @@ sanitize_filename <- function(filename, replacement_char = "_") {
                          x = filename)
   
   return(sanitized_name)
+}
+
+# =============================================================================
+#
+#  BIOGEOGRAPHY PRE-PROCESSING FUNCTIONS
+#
+# =============================================================================
+#
+# These functions prepare inputs for PastML and BioGeoBEARS analyses.
+# They are designed to be called independently, allowing step-by-step execution.
+#
+# Workflow:
+#   Step A: prune_tree_to_target_family()  -> Remove non-target family tips
+#   Step B: prepare_geography_for_pastml() -> Create PastML-compatible CSV
+#   Step C: prepare_geography_for_biogeobears() -> Create BioGeoBEARS-compatible CSV + tree
+#   Step D: pastml_process_tree()          -> Run PastML analysis
+#   Step E: run_biogeobears_pipeline()     -> Run BioGeoBEARS analysis
+#
+# =============================================================================
+
+
+# =============================================================================
+# Step A: prune_tree_to_target_family
+# =============================================================================
+#
+# Purpose:
+#   Remove tips that do not belong to the target family.
+#   This is typically used to remove outgroups/sister groups used for dating/rooting.
+#
+# Input:
+#   - tree_path: Path to the input tree file (.nwk or .tre)
+#   - target_family: Name of the target family (e.g., "Cleridae")
+#                    If NULL, automatically selects the most frequent family.
+#   - output_path: Path for the output tree. If NULL, adds "_pruned" suffix.
+#
+# Output:
+#   - Writes the pruned tree to output_path
+#   - Returns the output path (invisibly)
+#
+# Note:
+#   This function assumes tip labels follow the format: genetype_id_taxon_realm
+#   where taxon (parts[3]) is the family name.
+#
+# =============================================================================
+
+prune_tree_to_target_family <- function(tree_path,
+                                         target_family = NULL,
+                                         output_path = NULL) {
+  library(ape)
+  library(stringr)
+
+  cat("\n")
+  cat("###########################################################################\n")
+  cat("#  Step A: Prune Tree to Target Family                                   #\n")
+  cat("###########################################################################\n\n")
+
+  # Validate input
+
+if (!file.exists(tree_path)) {
+    stop("ERROR: Tree file not found: ", tree_path)
+  }
+
+  # Read tree
+  tree <- ape::read.tree(tree_path)
+  original_n_tips <- length(tree$tip.label)
+  cat("Input tree:", tree_path, "\n")
+  cat("Original number of tips:", original_n_tips, "\n")
+
+  # Extract family from tip labels
+  all_tips <- tree$tip.label
+  families <- sapply(all_tips, function(tip) {
+    parts <- str_split_fixed(tip, "_", 4)
+    parts[, 3]
+  }, USE.NAMES = FALSE)
+  names(families) <- all_tips
+
+  # Determine target family
+  if (is.null(target_family)) {
+    family_table <- table(families[families != "" & !is.na(families)])
+    if (length(family_table) == 0) {
+      stop("ERROR: Could not extract any family names from tip labels.")
+    }
+    target_family <- names(which.max(family_table))
+    cat("Target family (auto-detected):", target_family, "\n")
+  } else {
+    cat("Target family (user-specified):", target_family, "\n")
+  }
+
+  # Identify tips to remove
+  tips_to_drop <- names(families)[families != target_family | is.na(families) | families == ""]
+  tips_to_drop <- intersect(tips_to_drop, all_tips)
+
+  if (length(tips_to_drop) == 0) {
+    cat("No tips to remove. Tree unchanged.\n")
+  } else {
+    cat("Removing", length(tips_to_drop), "tips from other families...\n")
+    tree <- ape::drop.tip(tree, tips_to_drop)
+    cat("Remaining tips:", length(tree$tip.label), "\n")
+  }
+
+  # Determine output path
+  if (is.null(output_path)) {
+    output_path <- sub("\\.(nwk|tre|tree)$", "_pruned.\\1", tree_path)
+    if (output_path == tree_path) {
+      output_path <- paste0(tools::file_path_sans_ext(tree_path), "_pruned.nwk")
+    }
+  }
+
+  # Write output
+  ape::write.tree(tree, file = output_path)
+  cat("Output tree saved to:", output_path, "\n")
+  cat("\n")
+
+  return(invisible(output_path))
+}
+
+
+# =============================================================================
+# Step B: prepare_geography_for_pastml
+# =============================================================================
+#
+# Purpose:
+#   Prepare a geography CSV file compatible with PastML requirements.
+#
+# PastML requirements:
+#   - Each tip must have exactly ONE state (realm)
+#   - Tips without realm data are allowed (will have empty state)
+#   - All tips in the tree must be present in the CSV
+#
+# Input:
+#   - tree_path: Path to the tree file
+#   - geography_csv: Path to the input geography CSV (columns: tip, realm)
+#                    Multiple realms can be separated by ";" or ","
+#   - output_csv: Path for output CSV. If NULL, auto-generated.
+#
+# Processing:
+#   - For tips with multiple realms: keep only the FIRST one
+#   - For tips not in CSV: add them with empty realm
+#   - All tree tips are preserved
+#
+# Output:
+#   - Writes PastML-compatible CSV (columns: ID, realm)
+#   - Returns the output path (invisibly)
+#
+# =============================================================================
+
+prepare_geography_for_pastml <- function(tree_path,
+                                          geography_csv,
+                                          output_csv = NULL) {
+  library(ape)
+
+  cat("\n")
+  cat("###########################################################################\n")
+  cat("#  Step B: Prepare Geography for PastML                                  #\n")
+  cat("###########################################################################\n\n")
+
+  # Validate inputs
+  if (!file.exists(tree_path)) {
+    stop("ERROR: Tree file not found: ", tree_path)
+  }
+  if (!file.exists(geography_csv)) {
+    stop("ERROR: Geography CSV not found: ", geography_csv)
+  }
+
+  # Read tree
+  tree <- ape::read.tree(tree_path)
+  tree_tips <- tree$tip.label
+  cat("Tree:", tree_path, "\n")
+  cat("Number of tips in tree:", length(tree_tips), "\n")
+
+  # Read geography CSV
+  geog_raw <- utils::read.csv(geography_csv, stringsAsFactors = FALSE, check.names = FALSE)
+  colnames(geog_raw) <- tolower(trimws(colnames(geog_raw)))
+
+  # Identify columns
+  if ("tip" %in% colnames(geog_raw)) {
+    id_col <- "tip"
+  } else if ("id" %in% colnames(geog_raw)) {
+    id_col <- "id"
+  } else {
+    id_col <- colnames(geog_raw)[1]
+  }
+
+  if ("realm" %in% colnames(geog_raw)) {
+    realm_col <- "realm"
+  } else if ("state" %in% colnames(geog_raw)) {
+    realm_col <- "state"
+  } else {
+    realm_col <- colnames(geog_raw)[2]
+  }
+
+  cat("Geography CSV:", geography_csv, "\n")
+  cat("ID column:", id_col, ", Realm column:", realm_col, "\n")
+  cat("Rows in CSV:", nrow(geog_raw), "\n")
+
+  # Process: for each tip, get the FIRST realm only
+  geog_processed <- data.frame(ID = character(), realm = character(), stringsAsFactors = FALSE)
+
+  for (tip in tree_tips) {
+    matching_rows <- geog_raw[[id_col]] == tip
+    if (any(matching_rows)) {
+      realm_str <- geog_raw[[realm_col]][which(matching_rows)[1]]
+      # Split by ; or , and take only the first
+      realms <- trimws(unlist(strsplit(as.character(realm_str), "[;,]")))
+      realms <- realms[realms != "" & !is.na(realms) & tolower(realms) != "unk"]
+      first_realm <- if (length(realms) > 0) realms[1] else ""
+    } else {
+      first_realm <- ""
+    }
+    geog_processed <- rbind(geog_processed, data.frame(ID = tip, realm = first_realm, stringsAsFactors = FALSE))
+  }
+
+  # Statistics
+  n_with_realm <- sum(geog_processed$realm != "")
+  n_without_realm <- sum(geog_processed$realm == "")
+  cat("\nProcessing complete:\n")
+  cat("  Tips with realm:", n_with_realm, "\n")
+  cat("  Tips without realm:", n_without_realm, "(will have empty state in PastML)\n")
+
+  # Determine output path
+  if (is.null(output_csv)) {
+    output_csv <- file.path(dirname(geography_csv),
+                            paste0(tools::file_path_sans_ext(basename(geography_csv)), "_pastml.csv"))
+  }
+
+  # Write output
+  utils::write.csv(geog_processed, file = output_csv, row.names = FALSE, quote = FALSE)
+  cat("Output CSV saved to:", output_csv, "\n\n")
+
+  return(invisible(output_csv))
+}
+
+
+# =============================================================================
+# Step C: prepare_geography_for_biogeobears
+# =============================================================================
+#
+# Purpose:
+#   Prepare geography CSV and tree compatible with BioGeoBEARS requirements.
+#
+# BioGeoBEARS requirements:
+#   - Each tip MUST have at least one realm (tips without realm are removed)
+#   - A tip CAN have multiple realms (each realm on a separate row in internal format)
+#   - Tree must only contain tips that have realm data
+#
+# Input:
+#   - tree_path: Path to the tree file
+#   - geography_csv: Path to input geography CSV (columns: tip, realm)
+#                    Multiple realms can be separated by ";" or ","
+#   - output_csv: Path for output CSV. If NULL, auto-generated.
+#   - output_tree: Path for output tree. If NULL, auto-generated.
+#
+# Processing:
+#   - Remove tips from tree that have no realm data
+#   - Expand multi-realm entries (each realm on separate row)
+#
+# Output:
+#   - Writes BioGeoBEARS-compatible CSV (columns: ID, realm - one realm per row)
+#   - Writes pruned tree (only tips with realm data)
+#   - Returns list(csv = output_csv, tree = output_tree)
+#
+# =============================================================================
+
+prepare_geography_for_biogeobears <- function(tree_path,
+                                               geography_csv,
+                                               output_csv = NULL,
+                                               output_tree = NULL) {
+  library(ape)
+
+  cat("\n")
+  cat("###########################################################################\n")
+  cat("#  Step C: Prepare Geography for BioGeoBEARS                             #\n")
+  cat("###########################################################################\n\n")
+
+  # Validate inputs
+  if (!file.exists(tree_path)) {
+    stop("ERROR: Tree file not found: ", tree_path)
+  }
+  if (!file.exists(geography_csv)) {
+    stop("ERROR: Geography CSV not found: ", geography_csv)
+  }
+
+  # Read tree
+  tree <- ape::read.tree(tree_path)
+  tree_tips <- tree$tip.label
+  original_n_tips <- length(tree_tips)
+  cat("Tree:", tree_path, "\n")
+  cat("Number of tips in tree:", original_n_tips, "\n")
+
+  # Read geography CSV
+  geog_raw <- utils::read.csv(geography_csv, stringsAsFactors = FALSE, check.names = FALSE)
+  colnames(geog_raw) <- tolower(trimws(colnames(geog_raw)))
+
+  # Identify columns
+  if ("tip" %in% colnames(geog_raw)) {
+    id_col <- "tip"
+  } else if ("id" %in% colnames(geog_raw)) {
+    id_col <- "id"
+  } else {
+    id_col <- colnames(geog_raw)[1]
+  }
+
+  if ("realm" %in% colnames(geog_raw)) {
+    realm_col <- "realm"
+  } else if ("state" %in% colnames(geog_raw)) {
+    realm_col <- "state"
+  } else {
+    realm_col <- colnames(geog_raw)[2]
+  }
+
+  cat("Geography CSV:", geography_csv, "\n")
+  cat("ID column:", id_col, ", Realm column:", realm_col, "\n")
+
+  # Process: expand multi-realm entries, filter to tree tips
+  geog_expanded <- data.frame(ID = character(), realm = character(), stringsAsFactors = FALSE)
+  tips_with_realm <- character()
+
+  for (i in seq_len(nrow(geog_raw))) {
+    tip_id <- geog_raw[[id_col]][i]
+
+    # Skip if tip not in tree
+    if (!(tip_id %in% tree_tips)) next
+
+    realm_str <- geog_raw[[realm_col]][i]
+    # Split by ; or ,
+    realms <- trimws(unlist(strsplit(as.character(realm_str), "[;,]")))
+    realms <- realms[realms != "" & !is.na(realms) & tolower(realms) != "unk"]
+
+    if (length(realms) > 0) {
+      tips_with_realm <- c(tips_with_realm, tip_id)
+      for (r in realms) {
+        geog_expanded <- rbind(geog_expanded, data.frame(ID = tip_id, realm = r, stringsAsFactors = FALSE))
+      }
+    }
+  }
+
+  tips_with_realm <- unique(tips_with_realm)
+
+  # Identify tips to remove (no realm data)
+  tips_without_realm <- setdiff(tree_tips, tips_with_realm)
+
+  cat("\nProcessing complete:\n")
+  cat("  Tips with realm data:", length(tips_with_realm), "\n")
+  cat("  Tips without realm data:", length(tips_without_realm), "(will be removed from tree)\n")
+
+  if (length(tips_with_realm) == 0) {
+    stop("ERROR: No tips have valid realm data. Cannot proceed.")
+  }
+
+  # Prune tree
+  if (length(tips_without_realm) > 0) {
+    tree <- ape::drop.tip(tree, tips_without_realm)
+    cat("  Pruned tree now has:", length(tree$tip.label), "tips\n")
+  }
+
+  # Filter CSV to only include tips in pruned tree
+  geog_expanded <- geog_expanded[geog_expanded$ID %in% tree$tip.label, ]
+
+  # Statistics
+  n_unique_tips <- length(unique(geog_expanded$ID))
+  n_multi_realm <- sum(table(geog_expanded$ID) > 1)
+  cat("  Tips with multiple realms:", n_multi_realm, "\n")
+  cat("  Total rows in output CSV:", nrow(geog_expanded), "\n")
+
+  # Determine output paths
+  if (is.null(output_csv)) {
+    output_csv <- file.path(dirname(geography_csv),
+                            paste0(tools::file_path_sans_ext(basename(geography_csv)), "_biogeobears.csv"))
+  }
+  if (is.null(output_tree)) {
+    output_tree <- sub("\\.(nwk|tre|tree)$", "_biogeobears.\\1", tree_path)
+    if (output_tree == tree_path) {
+      output_tree <- paste0(tools::file_path_sans_ext(tree_path), "_biogeobears.nwk")
+    }
+  }
+
+  # Write outputs
+  utils::write.csv(geog_expanded, file = output_csv, row.names = FALSE, quote = FALSE)
+  ape::write.tree(tree, file = output_tree)
+
+  cat("\nOutput files:\n")
+  cat("  CSV:", output_csv, "\n")
+  cat("  Tree:", output_tree, "\n\n")
+
+  return(invisible(list(csv = output_csv, tree = output_tree)))
 }
 
 # Path to the FASTA file containing all barcode sequences. This includes barcodes 
@@ -1195,101 +1580,146 @@ cal_transition_probability_tab <- function(named_tree_path, probabilities_filepa
 cal_transition_rate_tab <- cal_transition_probability_tab
 
 
-pastml_process_tree <- function(dated_tree_path,
-                                discard_other_family = TRUE) {
-  
+pastml_process_tree <- function(tree_path,
+                                geography_csv = NULL) {
+
   library(tidyverse)
   library(ggtree)
   library(ggplot2)
   library(stringr)
-  # dated_tree_path: Path to the dated tree from the previous step.
-  # location_path: Path to the tip states file (ID, realm). This is now auto-generated.
-  # discard_other_family: If TRUE, removes tips not belonging to the main target family.
-  # pastml_path: Absolute path to the PastML executable in WSL.
-  
+
+  # =============================================================================
+  # Step D: PastML Analysis
+  # =============================================================================
+  #
+  # Input:
+  #   - tree_path: Path to a clean, ready-to-analyze tree
+  #   - geography_csv: Path to PastML-compatible CSV (from prepare_geography_for_pastml)
+  #                    Format: ID, realm (one realm per tip, empty allowed)
+  #                    If NULL, will attempt to extract from tip labels (legacy mode)
+  #
+  # Note:
+  #   The tree should already be pruned to target family if needed.
+  #   Use prune_tree_to_target_family() before calling this function.
+  #
+  # =============================================================================
+
+  cat("\n")
+  cat("###########################################################################\n")
+  cat("#  Step D: PastML Ancestral State Reconstruction                         #\n")
+  cat("###########################################################################\n\n")
+
+  # Validate inputs
+  if (!file.exists(tree_path)) {
+    stop("ERROR: Tree file not found: ", tree_path)
+  }
+
   # Create a dedicated directory for the tree's analysis outputs.
-  tree <- dated_tree_path
+  tree <- tree_path
   win_tree_dir <- paste0(tools::file_path_sans_ext(tree), "_pastml")
   dir.create(win_tree_dir, showWarnings = FALSE)
-  
+
   # Get the path to PastML within WSL.
   pastml_path_raw <- system("wsl bash -ic 'which pastml'", intern = TRUE)
   pastml_path <- tail(pastml_path_raw, 1)
-  # Print the located path for verification.
-  print(pastml_path)
-  
-  # Auto-generate the location data file from tip labels.
+  cat("PastML path:", pastml_path, "\n")
+
+  # Read tree
   use.tree <- read.tree(tree)
   use.tree.tip <- use.tree$tip.label
-  extract_realm <- function(tip) {
-    parts <- str_split_fixed(tip, "_", 4)
-    parts[,4] # The last element is the biogeographic realm.
+  tree_name <- tools::file_path_sans_ext(basename(tree))
+  cat("Tree:", tree_path, "\n")
+  cat("Number of tips:", length(use.tree.tip), "\n")
+
+  # --- Load geography data ---
+  if (!is.null(geography_csv) && file.exists(geography_csv)) {
+    # Use provided CSV file
+    cat("Geography CSV:", geography_csv, "\n")
+
+    geog_raw <- utils::read.csv(geography_csv, stringsAsFactors = FALSE, check.names = FALSE)
+    colnames(geog_raw) <- tolower(trimws(colnames(geog_raw)))
+
+    # Identify columns
+    if ("id" %in% colnames(geog_raw)) {
+      id_col <- "id"
+    } else {
+      id_col <- colnames(geog_raw)[1]
+    }
+    if ("realm" %in% colnames(geog_raw)) {
+      realm_col <- "realm"
+    } else if ("state" %in% colnames(geog_raw)) {
+      realm_col <- "state"
+    } else {
+      realm_col <- colnames(geog_raw)[2]
+    }
+
+    # Create tips_realm vector (for PastML: take only FIRST realm if multiple)
+    tips_realm <- setNames(rep("", length(use.tree.tip)), use.tree.tip)
+    for (i in seq_len(nrow(geog_raw))) {
+      tip_id <- geog_raw[[id_col]][i]
+      if (tip_id %in% use.tree.tip) {
+        realm_str <- geog_raw[[realm_col]][i]
+        # Split by ; or , and take only the first realm (PastML requires single state)
+        realms <- trimws(unlist(strsplit(as.character(realm_str), "[;,]")))
+        realms <- realms[realms != "" & !is.na(realms) & tolower(realms) != "unk"]
+        tips_realm[tip_id] <- if (length(realms) > 0) realms[1] else ""
+      }
+    }
+
+  } else {
+    # Legacy mode: extract from tip labels
+    cat("WARNING: No geography CSV provided. Extracting from tip labels (legacy mode).\n")
+    cat("         Consider using prepare_geography_for_pastml() for better control.\n\n")
+
+    extract_realm_local <- function(tip) {
+      parts <- str_split_fixed(tip, "_", 4)
+      parts[,4]
+    }
+    tips_realm <- sapply(use.tree.tip, extract_realm_local)
   }
-  tips_realm <- sapply(use.tree.tip, extract_realm)
-  location_path <- paste0(win_tree_dir, "/matched_location.csv")
-  
-  # If realm codes are not single characters, map them.
-  if (!all(nchar(tips_realm[tips_realm != ""]) == 1)) {
+
+  # Map realm codes to single characters if needed
+  if (!all(nchar(tips_realm[tips_realm != "" & !is.na(tips_realm)]) == 1)) {
     realm_map <- c(
-      "NA" = "N",  # Nearctic
-      "NT" = "T",  # Neotropical
-      "PN" = "P",  # Panamanian
-      "PA" = "A",  # Palaearctic
-      "SA" = "S",  # Saharo-Arabian
-      "SJ" = "J",  # Sino-Japanese
-      "AT" = "F",  # Afrotropical
-      "MA" = "M",  # Madagascan
-      "IM" = "I",  # Indomalayan
-      "AA" = "U",  # Australasian
-      "OC" = "O"   # Oceania
+      "NA" = "N", "NT" = "T", "PN" = "P", "PA" = "A",
+      "SA" = "S", "SJ" = "J", "AT" = "F", "MA" = "M",
+      "IM" = "I", "AA" = "U", "OC" = "O"
     )
-    
-    # Dynamically map any realms not in the predefined list.
+
     unique_realms <- unique(as.character(tips_realm))
     missing_realms <- setdiff(unique_realms, names(realm_map))
-    missing_realms <- missing_realms[missing_realms != ""]
+    missing_realms <- missing_realms[missing_realms != "" & !is.na(missing_realms)]
     extra_map <- setNames(letters[seq_along(missing_realms)], missing_realms)
     full_map <- c(realm_map, extra_map)
-    
-    # Apply the mapping.
+
     tips_realm_mapped <- sapply(tips_realm, function(x) {
-      if (x == "") {
-        "" # Preserve empty strings.
-      } else {
-        full_map[[x]]
-      }
+      if (x == "" || is.na(x)) "" else if (x %in% names(full_map)) full_map[[x]] else x
     })
     tips_realm <- tips_realm_mapped
   }
-  
-  # Convert the named vector to a data frame and save as CSV.
+
+  # Save location file for PastML
+  location_path <- paste0(win_tree_dir, "/matched_location.csv")
   tips_df <- data.frame(
     ID = names(tips_realm),
     realm = as.vector(tips_realm),
     stringsAsFactors = FALSE
   )
   write.csv(tips_df, file = location_path, row.names = FALSE)
-  
+  cat("Location file saved to:", location_path, "\n")
+
+  # Statistics
+  n_with_realm <- sum(tips_realm != "" & !is.na(tips_realm))
+  n_without_realm <- sum(tips_realm == "" | is.na(tips_realm))
+  cat("Tips with realm:", n_with_realm, "\n")
+  cat("Tips without realm:", n_without_realm, "\n\n")
+
   safe_feature <- "realm"
-  
-  # Process the tree to ensure only the target family is included.
-  use.tree <- read.tree(tree)
-  tree_name <- tools::file_path_sans_ext(basename(tree))
-  if (discard_other_family) {
-    all_tips <- use.tree$tip.label
-    families <- sapply(all_tips, extract_family)
-    target_family <- names(which.max(table(families)))
-    # Identify tips that do not belong to the target family (or are NA).
-    tips_to_drop <- names(families)[families != target_family | is.na(families)]
-    # Ensure all tips to be dropped actually exist in the tree to prevent errors.
-    tips_to_drop <- intersect(tips_to_drop, all_tips)
-    # Prune the tips.
-    use.tree <- drop.tip(use.tree, tips_to_drop)
-  }
-  # Save the pruned tree to the working directory.
+
+  # Save tree for PastML (no pruning needed - tree is already clean)
   tree_save_path <- file.path(win_tree_dir, basename(tree))
   write.tree(use.tree, file = tree_save_path)
-  
+
   # Convert paths to WSL format for command-line execution.
   wsl_location <- convert_path_to_wsl(location_path)
   wsl_tree <- convert_path_to_wsl(tree_save_path)
@@ -1426,20 +1856,35 @@ pastml_process_tree <- function(dated_tree_path,
 # dispersal_multipliers_filepath <- "C:\\Users\\16575\\Documents\\Rdocuments\\my_dispersal_multipliers_20mya.txt"
 
 run_biogeobears_pipeline <- function(tree_filepath,
+                                     geography_csv = NULL,  # Path to BioGeoBEARS-compatible CSV (from prepare_geography_for_biogeobears)
                                      output_tag = "biogeobears",
                                      num_cores = 12,
                                      models_to_run = c("DEC", "DEC+J", "DIVALIKE", "DIVALIKE+J", "BAYAREALIKE", "BAYAREALIKE+J"),
-                                     discard_other_family = TRUE, # If TRUE, prune tips from other families to focus the analysis.
-                                     sydysfinal_list = NULL, # Legacy parameter for handling taxa with multiple geographic records; now handled by data format.
                                      # The two files below are for time-stratified analysis.
-                                     timeperiods_filepath = "C:\\Users\\16575\\Documents\\Rdocuments\\my_timeperiods_20mya.txt",
-                                     dispersal_multipliers_filepath = "C:\\Users\\16575\\Documents\\Rdocuments\\my_dispersal_multipliers_20mya.txt",
+                                     timeperiods_filepath = NULL,
+                                     dispersal_multipliers_filepath = NULL,
                                      user_max_range_size = 3,
                                      min_brlen = 1e-6,
                                      plot_width_px = 6000,
                                      plot_height_px = 36000,
                                      plot_res_dpi = 400
 ) {
+  # =============================================================================
+  # Step E: BioGeoBEARS Analysis
+  # =============================================================================
+  #
+  # Input:
+  #   - tree_filepath: Path to a clean, ready-to-analyze tree
+  #   - geography_csv: Path to BioGeoBEARS-compatible CSV (from prepare_geography_for_biogeobears)
+  #                    Format: ID, realm (one realm per row, multiple rows per tip allowed)
+  #                    If NULL, will attempt to extract from tip labels (legacy mode)
+  #
+  # Note:
+  #   The tree should already be pruned appropriately.
+  #   Use prune_tree_to_target_family() and prepare_geography_for_biogeobears() before calling.
+  #
+  # =============================================================================
+
   library(BioGeoBEARS)
   library(ape)
   library(dplyr)
@@ -1448,78 +1893,148 @@ run_biogeobears_pipeline <- function(tree_filepath,
   library(phytools)
   library(stringr)
   library(snow)
-  
-  # dated_tree_path: The dated tree from the previous step.
-  # location_path: Tip states file (ID, realm).
-  # discard_other_family: If TRUE, non-target families (used for dating/rooting) are pruned.
-  
+
+  cat("\n")
+  cat("###########################################################################\n")
+  cat("#  Step E: BioGeoBEARS Biogeographical Analysis                          #\n")
+  cat("###########################################################################\n\n")
+
   # --- 1. Validate inputs and set up paths ---
   # Path for caching temporary files.
   backup_dir <- file.path(dirname(tree_filepath), "backup_dir")
   dir.create(backup_dir, showWarnings = FALSE)
-  
+
   # Path for final BioGeoBEARS results.
   save_biogeobears_path <- paste0(tools::file_path_sans_ext(tree_filepath), "_biogeobears_results")
   dir.create(save_biogeobears_path, showWarnings = FALSE)
-  
-  print("--- 1. Validating inputs and setting up paths ---")
-  if (!file.exists(tree_filepath)) stop("Tree file not found: ", tree_filepath)
-  
-  # Auto-generate the location data file from tip labels.
+
+  cat("--- 1. Validating inputs and setting up paths ---\n")
+  if (!file.exists(tree_filepath)) stop("ERROR: Tree file not found: ", tree_filepath)
+  cat("Tree:", tree_filepath, "\n")
+
+  # Read tree
   use.tree <- read.tree(tree_filepath)
   use.tree.tip <- use.tree$tip.label
-  extract_realm <- function(tip) {
-    parts <- str_split_fixed(tip, "_", 4)
-    parts[,4] # The last element is the biogeographic realm.
-  }
-  tips_realm <- sapply(use.tree.tip, extract_realm)
+  cat("Number of tips:", length(use.tree.tip), "\n")
+
+  # --- Load geography data ---
   tip_states_filepath <- paste0(save_biogeobears_path, "/matched_location.csv")
-  
-  # If realm codes are not single characters, map them to single characters.
-  if (!all(nchar(tips_realm[tips_realm != ""]) == 1)) {
-    realm_map <- c(
-      "NA" = "N",  # Nearctic
-      "NT" = "T",  # Neotropical
-      "PN" = "P",  # Panamanian
-      "PA" = "A",  # Palaearctic
-      "SA" = "S",  # Saharo-Arabian
-      "SJ" = "J",  # Sino-Japanese
-      "AT" = "F",  # Afrotropical
-      "MA" = "M",  # Madagascan
-      "IM" = "I",  # Indomalayan
-      "AA" = "U",  # Australasian
-      "OC" = "O"   # Oceania
-    )
-    
-    unique_realms <- unique(as.character(tips_realm))
-    # Find any realms not in the predefined map.
-    missing_realms <- setdiff(unique_realms, names(realm_map))
-    missing_realms <- missing_realms[missing_realms != ""]
-    # Assign letters (a, b, c...) to any missing realms.
-    extra_map <- setNames(letters[seq_along(missing_realms)], missing_realms)
-    # Create the final, complete map.
-    full_map <- c(realm_map, extra_map)
-    # Apply the mapping.
-    tips_realm_mapped <- sapply(tips_realm, function(x) {
-      if (x == "") {
-        "" # Preserve empty strings.
-      } else {
-        full_map[[x]]
+
+  if (!is.null(geography_csv) && file.exists(geography_csv)) {
+    # Use provided CSV file
+    cat("Geography CSV:", geography_csv, "\n")
+
+    geog_raw <- utils::read.csv(geography_csv, stringsAsFactors = FALSE, check.names = FALSE)
+    colnames(geog_raw) <- tolower(trimws(colnames(geog_raw)))
+
+    # Identify columns
+    if ("id" %in% colnames(geog_raw)) {
+      id_col <- "id"
+    } else {
+      id_col <- colnames(geog_raw)[1]
+    }
+    if ("realm" %in% colnames(geog_raw)) {
+      realm_col <- "realm"
+    } else if ("state" %in% colnames(geog_raw)) {
+      realm_col <- "state"
+    } else {
+      realm_col <- colnames(geog_raw)[2]
+    }
+
+    # Filter to tips in tree and expand multi-realm entries (split "A;B" format)
+    geog_filtered <- geog_raw[geog_raw[[id_col]] %in% use.tree.tip, ]
+
+    # Expand multi-realm cells: each realm becomes a separate row
+    tips_df <- data.frame(ID = character(), realm = character(), stringsAsFactors = FALSE)
+    for (i in seq_len(nrow(geog_filtered))) {
+      tip_id <- geog_filtered[[id_col]][i]
+      realm_str <- geog_filtered[[realm_col]][i]
+      # Split by ; or , to handle multi-realm format
+      realms <- trimws(unlist(strsplit(as.character(realm_str), "[;,]")))
+      realms <- realms[realms != "" & !is.na(realms) & tolower(realms) != "unk"]
+
+      if (length(realms) > 0) {
+        for (r in realms) {
+          tips_df <- rbind(tips_df, data.frame(ID = tip_id, realm = r, stringsAsFactors = FALSE))
+        }
       }
-    })
-    tips_realm <- tips_realm_mapped
+    }
+
+    if (nrow(tips_df) == 0) {
+      stop("ERROR: No valid realm data found after processing geography CSV.")
+    }
+
+    # Map realm codes to single characters if needed
+    unique_realms <- unique(tips_df$realm)
+    unique_realms <- unique_realms[unique_realms != "" & !is.na(unique_realms)]
+
+    if (length(unique_realms) > 0 && !all(nchar(unique_realms) == 1)) {
+      realm_map <- c(
+        "NA" = "N", "NT" = "T", "PN" = "P", "PA" = "A",
+        "SA" = "S", "SJ" = "J", "AT" = "F", "MA" = "M",
+        "IM" = "I", "AA" = "U", "OC" = "O"
+      )
+
+      missing_realms <- setdiff(unique_realms, names(realm_map))
+      missing_realms <- missing_realms[missing_realms != "" & !is.na(missing_realms)]
+      extra_map <- setNames(toupper(letters[seq_along(missing_realms)]), missing_realms)
+      full_map <- c(realm_map, extra_map)
+
+      tips_df$realm <- sapply(tips_df$realm, function(x) {
+        if (x == "" || is.na(x)) "" else if (x %in% names(full_map)) full_map[[x]] else x
+      })
+    }
+
+    write.csv(tips_df, file = tip_states_filepath, row.names = FALSE)
+    cat("Location file saved to:", tip_states_filepath, "\n")
+
+    # Statistics
+    n_unique_tips <- length(unique(tips_df$ID))
+    n_multi_realm <- sum(table(tips_df$ID) > 1)
+    cat("Tips with geography data:", n_unique_tips, "\n")
+    cat("Tips with multiple realms:", n_multi_realm, "\n\n")
+
+  } else {
+    # Legacy mode: extract from tip labels
+    cat("WARNING: No geography CSV provided. Extracting from tip labels (legacy mode).\n")
+    cat("         Consider using prepare_geography_for_biogeobears() for better control.\n\n")
+
+    extract_realm <- function(tip) {
+      parts <- str_split_fixed(tip, "_", 4)
+      parts[,4]
+    }
+    tips_realm <- sapply(use.tree.tip, extract_realm)
+
+    # Map realm codes to single characters if needed
+    if (!all(nchar(tips_realm[tips_realm != ""]) == 1)) {
+      realm_map <- c(
+        "NA" = "N", "NT" = "T", "PN" = "P", "PA" = "A",
+        "SA" = "S", "SJ" = "J", "AT" = "F", "MA" = "M",
+        "IM" = "I", "AA" = "U", "OC" = "O"
+      )
+
+      unique_realms <- unique(as.character(tips_realm))
+      missing_realms <- setdiff(unique_realms, names(realm_map))
+      missing_realms <- missing_realms[missing_realms != ""]
+      extra_map <- setNames(letters[seq_along(missing_realms)], missing_realms)
+      full_map <- c(realm_map, extra_map)
+
+      tips_realm_mapped <- sapply(tips_realm, function(x) {
+        if (x == "") "" else full_map[[x]]
+      })
+      tips_realm <- tips_realm_mapped
+    }
+
+    tips_df <- data.frame(
+      ID = names(tips_realm),
+      realm = as.vector(tips_realm),
+      stringsAsFactors = FALSE
+    )
+    write.csv(tips_df, file = tip_states_filepath, row.names = FALSE)
   }
-  
-  # Convert the named vector to a data frame for saving.
-  tips_df <- data.frame(
-    ID = names(tips_realm),
-    realm = as.vector(tips_realm),
-    stringsAsFactors = FALSE
-  )
-  write.csv(tips_df, file = tip_states_filepath, row.names = FALSE)
-  
+
   if (!file.exists(tip_states_filepath)) stop("Tip states file not found: ", tip_states_filepath)
-  
+
   output_dir <- save_biogeobears_path
   tree_basename <- tools::file_path_sans_ext(basename(tree_filepath))
   output_prefix <- file.path(output_dir,output_tag)
@@ -1535,19 +2050,9 @@ run_biogeobears_pipeline <- function(tree_filepath,
   cs_tree <- ape::read.tree(tree_filepath)
   print(paste("Read tree with", length(cs_tree$tip.label), "tips and", cs_tree$Nnode, "internal nodes."))
   
-  # Optionally prune non-target families from the tree.
-  if (discard_other_family) {
-    all_tips <- cs_tree$tip.label
-    families <- sapply(all_tips, extract_family)
-    target_family <- names(which.max(table(families)))
-    # Identify tips that do not belong to the target family (or are NA).
-    tips_to_drop <- names(families)[families != target_family | is.na(families)]
-    # Ensure all tips to be dropped actually exist in the tree to prevent errors.
-    tips_to_drop <- intersect(tips_to_drop, all_tips)
-    # Prune the tips.
-    cs_tree <- drop.tip(cs_tree, tips_to_drop)
-  }
-  
+  # Note: Tree pruning should be done beforehand using prune_tree_to_target_family()
+  # This function now expects a pre-pruned tree and geography data.
+
   # Intelligently detect the separator (Tab or comma) in the states file.
   first_line_states <- readLines(tip_states_filepath, n = 1)
   sep_char <- ifelse(grepl("\t", first_line_states), "\t", ",")
@@ -2195,6 +2700,178 @@ run_biogeobears_pipeline <- function(tree_filepath,
 #   timeperiods_filepath = timeperiods_filepath,
 #   dispersal_multipliers_filepath = dispersal_multipliers_filepath
 # )
+
+# =============================================================================
+# create_chord_diagram - 创建圆环图展示区域间扩散流向
+# =============================================================================
+#
+# 【目的】
+# 创建弦图 (chord diagram) 展示区域间的扩散流向。
+# 弦图直观显示哪些区域之间有扩散事件，以及扩散的相对强度。
+#
+# 【输入参数】
+# - transition_matrix: 转换矩阵 (行 = 来源区, 列 = 目标区)
+# - title:             图表标题
+# - area_colors:       区域颜色 (可选，自动生成默认颜色)
+#
+# 【依赖】
+# 需要 circlize 包。如果未安装会跳过并发出警告。
+#
+# =============================================================================
+
+create_chord_diagram <- function(transition_matrix,
+                                  title = "Biogeographic Dispersal Flow",
+                                  area_colors = NULL,
+                                  min_value = 0) {
+
+  # Check circlize package
+  if (!requireNamespace("circlize", quietly = TRUE)) {
+    warning("Package 'circlize' not installed. Skipping chord diagram.")
+    return(invisible(NULL))
+  }
+
+  if (!is.matrix(transition_matrix)) {
+    transition_matrix <- as.matrix(transition_matrix)
+  }
+
+  areanames <- rownames(transition_matrix)
+  if (is.null(areanames)) {
+    areanames <- colnames(transition_matrix)
+  }
+  if (is.null(areanames)) {
+    areanames <- paste0("Area", 1:nrow(transition_matrix))
+  }
+
+  rownames(transition_matrix) <- areanames
+  colnames(transition_matrix) <- areanames
+
+  # Filter small values and handle NA
+  transition_matrix[is.na(transition_matrix)] <- 0
+  if (min_value > 0) {
+    transition_matrix[transition_matrix < min_value] <- 0
+  }
+
+  # Skip if all zeros
+
+  if (all(transition_matrix == 0)) {
+    return(invisible(NULL))
+  }
+
+  # Set default colors for biogeographic realms
+  if (is.null(area_colors)) {
+    default_colors <- c(
+      "N" = "#E41A1C", "T" = "#377EB8", "P" = "#4DAF4A", "A" = "#984EA3",
+      "S" = "#FF7F00", "J" = "#FFFF33", "F" = "#A65628", "M" = "#F781BF",
+      "I" = "#999999", "U" = "#66C2A5", "O" = "#8DA0CB"
+    )
+    area_colors <- sapply(areanames, function(a) {
+      if (a %in% names(default_colors)) default_colors[a] else rainbow(length(areanames))[which(areanames == a)]
+    })
+    names(area_colors) <- areanames
+  }
+
+  circlize::circos.clear()
+  circlize::circos.par(start.degree = 90, gap.degree = 4)
+
+  tryCatch({
+    circlize::chordDiagram(
+      transition_matrix,
+      grid.col = area_colors,
+      transparency = 0.3,
+      directional = 1,
+      direction.type = c("diffHeight", "arrows"),
+      link.arr.type = "big.arrow",
+      annotationTrack = c("name", "grid")
+    )
+    title(main = title, cex.main = 1.0, line = -1)
+  }, error = function(e) {
+    # Silently handle errors
+  })
+
+  circlize::circos.clear()
+
+  return(invisible(transition_matrix))
+}
+
+
+# =============================================================================
+# generate_chord_diagrams_set - 生成一组圆环图（全局 + 时间切片）
+# =============================================================================
+#
+# 生成两张图：
+# 1. 全局圆环图 (单图)
+# 2. 时间切片圆环图 (多个小图组合)
+#
+# =============================================================================
+
+generate_chord_diagrams_set <- function(global_matrix,
+                                         timeslice_list,
+                                         metric_type,
+                                         savedir,
+                                         model_name) {
+
+  if (!requireNamespace("circlize", quietly = TRUE)) {
+    cat("  Package 'circlize' not installed. Skipping chord diagrams.\n")
+    return(invisible(NULL))
+  }
+
+  cat(paste0("\n--- Generating ", metric_type, " chord diagrams ---\n"))
+
+  # --- 1. Global Chord Diagram ---
+  global_path <- file.path(savedir, paste0(model_name, "_chord_", metric_type, "_GLOBAL.png"))
+
+  png(filename = global_path, width = 10, height = 10, units = "in", res = 300)
+  create_chord_diagram(
+    transition_matrix = global_matrix,
+    title = paste0("Total Dispersal (d+j) - ", metric_type, " (Global)")
+  )
+  dev.off()
+  cat(paste0("  Global ", metric_type, " chord diagram saved: ", basename(global_path), "\n"))
+
+  # --- 2. Time-Stratified Chord Diagrams (combined into one figure) ---
+  n_slices <- length(timeslice_list)
+  if (n_slices == 0) {
+    cat("  No time slices to plot.\n")
+    return(invisible(NULL))
+  }
+
+  # Calculate grid layout
+  n_cols <- min(3, n_slices)
+  n_rows <- ceiling(n_slices / n_cols)
+
+  timeslice_path <- file.path(savedir, paste0(model_name, "_chord_", metric_type, "_TIMESLICES.png"))
+
+  # Set up PNG with appropriate dimensions
+  png(filename = timeslice_path,
+      width = 6 * n_cols,
+      height = 6 * n_rows,
+      units = "in",
+      res = 200)
+
+  par(mfrow = c(n_rows, n_cols), mar = c(1, 1, 3, 1))
+
+  for (i in seq_along(timeslice_list)) {
+    slice_name <- names(timeslice_list)[i]
+    slice_matrix <- timeslice_list[[i]]
+
+    # Handle NA matrices (time slices outside tree age)
+    if (all(is.na(slice_matrix)) || all(slice_matrix == 0, na.rm = TRUE)) {
+      plot.new()
+      title(main = paste0(slice_name, "\n(No data)"), cex.main = 0.9)
+    } else {
+      create_chord_diagram(
+        transition_matrix = slice_matrix,
+        title = slice_name
+      )
+    }
+  }
+
+  dev.off()
+  cat(paste0("  Time-stratified ", metric_type, " chord diagrams saved: ", basename(timeslice_path), "\n"))
+
+  return(invisible(NULL))
+}
+
 
 biogeobears_transition_matrices <- function(best_model_results,
                                             save_biogeobears_path,
@@ -2958,7 +3635,81 @@ biogeobears_transition_matrices <- function(best_model_results,
   )
 
   cat("\n--- All FLUX and RATE heatmaps generated successfully ---\n")
-  
+
+  # --- 7.5.1 Generate Chord Diagrams (Flux and Rate) ---
+  cat("\n--- Generating chord diagrams ---\n")
+
+  # Calculate global matrices for d, j, and total
+  # For FLUX: use counts / total duration
+  global_d_flux_matrix <- Reduce("+", avg_d_timeslice_list) / sum(durations_Ma)
+  global_j_flux_matrix <- Reduce("+", avg_j_timeslice_list) / sum(durations_Ma)
+  global_total_flux_matrix <- Reduce("+", avg_total_timeslice_list) / sum(durations_Ma)
+
+  # For RATE: use counts / total branch length
+  global_d_rate_matrix <- Reduce("+", avg_d_timeslice_list) / total_branch_length_Myrs
+  global_j_rate_matrix <- Reduce("+", avg_j_timeslice_list) / total_branch_length_Myrs
+  global_total_rate_matrix <- Reduce("+", avg_total_timeslice_list) / total_branch_length_Myrs
+
+  # --- FLUX Chord Diagrams (6 diagrams: d, j, total × global/timeslice) ---
+
+  # d-event FLUX
+  generate_chord_diagrams_set(
+    global_matrix = global_d_flux_matrix,
+    timeslice_list = avg_d_timeslice_flux_list,
+    metric_type = "FLUX_d-events",
+    savedir = savedir,
+    model_name = model_name
+  )
+
+  # j-event FLUX
+  generate_chord_diagrams_set(
+    global_matrix = global_j_flux_matrix,
+    timeslice_list = avg_j_timeslice_flux_list,
+    metric_type = "FLUX_j-events",
+    savedir = savedir,
+    model_name = model_name
+  )
+
+  # Total (d+j) FLUX
+  generate_chord_diagrams_set(
+    global_matrix = global_total_flux_matrix,
+    timeslice_list = avg_total_timeslice_flux_list,
+    metric_type = "FLUX_total",
+    savedir = savedir,
+    model_name = model_name
+  )
+
+  # --- RATE Chord Diagrams (6 diagrams: d, j, total × global/timeslice) ---
+
+  # d-event RATE
+  generate_chord_diagrams_set(
+    global_matrix = global_d_rate_matrix,
+    timeslice_list = avg_d_timeslice_rate_list,
+    metric_type = "RATE_d-events",
+    savedir = savedir,
+    model_name = model_name
+  )
+
+  # j-event RATE
+  generate_chord_diagrams_set(
+    global_matrix = global_j_rate_matrix,
+    timeslice_list = avg_j_timeslice_rate_list,
+    metric_type = "RATE_j-events",
+    savedir = savedir,
+    model_name = model_name
+  )
+
+  # Total (d+j) RATE
+  generate_chord_diagrams_set(
+    global_matrix = global_total_rate_matrix,
+    timeslice_list = avg_total_timeslice_rate_list,
+    metric_type = "RATE_total",
+    savedir = savedir,
+    model_name = model_name
+  )
+
+  cat("\n--- All chord diagrams generated successfully (12 diagrams total) ---\n")
+
   # --- 7.6 Generate all temporal trend plots ---
   cat("\n--- Generating temporal trend plots ---\n")
   
@@ -3582,11 +4333,12 @@ tree_biogeography_pipeline<-function(allsequences_path,
   
   
   
-  pastml_process_tree(dated_tree_path = dated_tree_path,
-                      discard_other_family = TRUE
+  pastml_process_tree(tree_path = dated_tree_path,
+                      geography_csv = NULL  # Will use legacy mode (extract from tip labels)
   )
   result_info <- run_biogeobears_pipeline(
     tree_filepath = dated_tree_path,
+    geography_csv = NULL,  # Will use legacy mode (extract from tip labels)
     timeperiods_filepath = timeperiods_filepath,
     dispersal_multipliers_filepath = dispersal_multipliers_filepath,
     num_cores = threads
