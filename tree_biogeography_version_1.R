@@ -1,4 +1,4 @@
-#20260107
+#20260203
 # The pipeline consists of the following steps:
 # construction_tree: Constructs the phylogenetic tree.
 # rooting_tree: Roots the tree generated in the previous step.
@@ -1008,20 +1008,62 @@ fix_backbone_dating_to_reconstruction <- function(backbone_dated_path, reconstru
 # This step includes analyses with PastML and BioGeoBEARS.
 # The required inputs are a dated tree and a table of tip biogeographic states.
 
-cal_transition_rate_tab <- function(named_tree_path, probabilities_filepath) {
+# =============================================================================
+# cal_transition_probability_tab (formerly cal_transition_rate_tab)
+# =============================================================================
+#
+# IMPORTANT METHODOLOGICAL NOTE:
+# ------------------------------
+# This function calculates "Transition Probability Contributions" from PastML
+# marginal probability output. This is NOT equivalent to the "Transition Rate"
+# calculated from BioGeoBEARS BSM (Biogeographical Stochastic Mapping).
+#
+# Key differences:
+#   - PastML: Originally designed for pathogen (bacteria/virus) phylogeography
+#             with short time scales and rapid generational turnover.
+#   - PastML does NOT perform stochastic mapping or discrete event counting.
+#   - This function approximates transition tendencies using:
+#       Contribution = P(parent in state A) × P(child in state B)
+#   - This is a PROBABILITY-BASED APPROXIMATION, not an event count.
+#
+# For rigorous Flux/Rate analysis (especially for macroevolutionary studies),
+# use BioGeoBEARS BSM results instead.
+#
+# Output interpretation:
+#   - "Total Contribution": Sum of probability products across all branches
+#   - "Normalized Contribution": Total divided by tree branch length
+#     (This is for normalization purposes only, NOT a true per-lineage rate)
+#
+# =============================================================================
+
+cal_transition_probability_tab <- function(named_tree_path, probabilities_filepath) {
   library(pheatmap)
+
+  cat("\n")
+  cat("###########################################################################\n")
+  cat("#                                                                         #\n")
+  cat("#  PastML Transition Probability Contribution Analysis                    #\n")
+  cat("#                                                                         #\n")
+  cat("###########################################################################\n")
+  cat("\n")
+  cat("NOTE: This analysis uses marginal probabilities from PastML to estimate\n")
+  cat("      transition tendencies. This is a PROBABILITY-BASED APPROXIMATION,\n")
+  cat("      NOT equivalent to event-based rates from BioGeoBEARS BSM.\n")
+  cat("      For rigorous Flux/Rate analysis, use BioGeoBEARS BSM results.\n")
+  cat("\n")
+
   # --- 1. Load Data ---
   # Read the time-calibrated phylogenetic tree.
   phy_tree <- ape::read.tree(named_tree_path)
-  
+
   # Read the node state probabilities output by PastML.
   # Assumes the first column of 'node_probabilities.tab' is the node/tip label,
   # and subsequent columns are probabilities for each geographic area.
   node_probs_df <- read.delim(probabilities_filepath, sep = "\t", header = TRUE, check.names = FALSE, stringsAsFactors = FALSE)
-  
+
   # Define geographic areas (must match the order in the node_probs_df columns).
   realms <- colnames(node_probs_df)[2:ncol(node_probs_df)]
-  
+
   # --- 2. Calculate Total Probability Contribution for Each Transition Type ---
   # Initialize a matrix to store the total probability contributions for all transitions.
   # Rows represent the 'from' state, and columns represent the 'to' state.
@@ -1030,15 +1072,15 @@ cal_transition_rate_tab <- function(named_tree_path, probabilities_filepath) {
                                            nrow = num_realms,
                                            ncol = num_realms,
                                            dimnames = list(from = realms, to = realms))
-  
+
   # Iterate over every branch (edge) in the tree.
   # tree$edge is a two-column matrix: column 1 is the parent node, column 2 is the child node.
   for (i in 1:nrow(phy_tree$edge)) {
     parent_node_idx <- phy_tree$edge[i, 1]
     daughter_node_idx <- phy_tree$edge[i, 2]
-    
+
     # --- Logic to retrieve state probabilities ---
-    # This helper function maps an 'ape' node index to a node label 
+    # This helper function maps an 'ape' node index to a node label
     # and retrieves the corresponding probability vector from the PastML output table.
     get_probs_by_ape_idx <- function(node_idx, tree, probs_df, realm_cols, node_id_col = "node") {
       node_label <- ""
@@ -1061,15 +1103,15 @@ cal_transition_rate_tab <- function(named_tree_path, probabilities_filepath) {
       }
       return(probs_vec)
     }
-    
+
     P_parent <- get_probs_by_ape_idx(parent_node_idx, phy_tree, node_probs_df, realms)
     P_daughter <- get_probs_by_ape_idx(daughter_node_idx, phy_tree, node_probs_df, realms)
-    
+
     # If probability data for either node is missing, skip this branch.
     if (all(P_parent == 0) || all(P_daughter == 0)) {
       next
     }
-    
+
     # Calculate and accumulate the contribution to each transition type.
     for (from_idx in 1:num_realms) {
       for (to_idx in 1:num_realms) {
@@ -1077,64 +1119,80 @@ cal_transition_rate_tab <- function(named_tree_path, probabilities_filepath) {
           # Core logic: The contribution of this branch to a given transition (from -> to)
           # is the probability of the parent being in the 'from' state multiplied by
           # the probability of the daughter being in the 'to' state.
+          # NOTE: This is a probability approximation, NOT an event count.
           contribution <- P_parent[from_idx] * P_daughter[to_idx]
           total_transition_contributions[from_idx, to_idx] <- total_transition_contributions[from_idx, to_idx] + contribution
         }
       }
     }
   }
-  
-  # --- 3. Calculate Transition Rates ---
+
+  # --- 3. Calculate Normalized Contribution (for comparison purposes only) ---
   # Get the total branch length of the tree (unit: million years).
   total_branch_length_myrs <- sum(phy_tree$edge.length)
-  
+
   if (total_branch_length_myrs == 0) {
-    stop("Error: Total tree branch length is zero. Cannot calculate rates. Ensure the tree is a time-calibrated phylogram.")
+    stop("Error: Total tree branch length is zero. Cannot normalize. Ensure the tree is a time-calibrated phylogram.")
   }
-  
-  # Transition rate matrix = total probability contribution / total branch length.
-  transition_rate_matrix_per_myr <- total_transition_contributions / total_branch_length_myrs
-  
+
+  # Normalized contribution = total probability contribution / total branch length.
+  # NOTE: This is NOT a true "rate" - it's just normalized for comparison across trees of different sizes.
+  normalized_contribution_matrix <- total_transition_contributions / total_branch_length_myrs
+
   # --- 4. Output Results ---
-  print("Total Transition Probability Contribution Matrix:")
+  cat("\n--- Results ---\n\n")
+
+  cat("Total Transition Probability Contribution Matrix:\n")
+  cat("(Sum of P_parent × P_daughter across all branches)\n\n")
   print(round(total_transition_contributions, 4))
-  
-  print(paste("Total phylogenetic branch length (Myr):", total_branch_length_myrs))
-  
-  print("Transition Rate Matrix (Avg. Probability Contribution / Myr):")
-  print(round(transition_rate_matrix_per_myr, 6))
-  
-  # --- NEW STEP: Save the rate matrix to a CSV file ---
-  # Construct the CSV filename based on the input probabilities filename.
-  csv_total_save_path <- sub("\\_probabilities.tab$", "_transition_total.csv", probabilities_filepath)
-  csv_save_path <- sub("\\_probabilities.tab$", "_transition_rates.csv", probabilities_filepath)
-  
-  # write.csv needs a data frame. We also want to keep the row names ('from' states).
+
+  cat(paste("\nTotal phylogenetic branch length (Myr):", round(total_branch_length_myrs, 2), "\n"))
+
+  cat("\nNormalized Transition Probability Contribution Matrix:\n")
+  cat("(Total contribution / branch length - for cross-tree comparison only)\n")
+  cat("WARNING: This is NOT equivalent to BioGeoBEARS transition rate!\n\n")
+  print(round(normalized_contribution_matrix, 6))
+
+  # --- 5. Save Results to CSV ---
+  csv_total_save_path <- sub("\\_probabilities.tab$", "_transition_probability_total.csv", probabilities_filepath)
+  csv_normalized_save_path <- sub("\\_probabilities.tab$", "_transition_probability_normalized.csv", probabilities_filepath)
+
   write.csv(as.data.frame(total_transition_contributions), file = csv_total_save_path, quote = FALSE)
-  write.csv(as.data.frame(transition_rate_matrix_per_myr), file = csv_save_path, quote = FALSE)
-  print(paste("Transition rate matrix saved to:", csv_save_path))
-  
-  # Visualization (e.g., heatmap).
-  save_path <- sub("\\_probabilities.tab$", "_transition_plots.png", probabilities_filepath)
+  write.csv(as.data.frame(normalized_contribution_matrix), file = csv_normalized_save_path, quote = FALSE)
+  cat(paste("\nTotal contribution matrix saved to:", csv_total_save_path, "\n"))
+  cat(paste("Normalized contribution matrix saved to:", csv_normalized_save_path, "\n"))
+
+  # --- 6. Visualization ---
+  save_path <- sub("\\_probabilities.tab$", "_transition_probability_heatmap.png", probabilities_filepath)
+
   # Convert numbers to scientific notation for display on the heatmap.
-  numbers_sci <- formatC(transition_rate_matrix_per_myr, format = "e", digits = 2)
-  
+  numbers_sci <- formatC(normalized_contribution_matrix, format = "e", digits = 2)
+
+  # Create heatmap with clear labeling
   pheatmap_obj <- pheatmap::pheatmap(
-    transition_rate_matrix_per_myr,
+    normalized_contribution_matrix,
     display_numbers = numbers_sci,
     cluster_rows = FALSE,
     cluster_cols = FALSE,
-    main = "Transition Rates (events/Myr) from PastML (Y-axis: From -> X-axis: To)",
-    fontsize_main = 12,
-    # Specify filename and dimensions directly here.
+    main = "PastML: Normalized Transition Probability Contribution\n(NOT event-based rate - for visualization only)",
+    fontsize_main = 11,
     filename = save_path,
-    width = 8,  # inches
-    height = 7, # inches
-    # silent = TRUE prevents the plot from being displayed in the R graphics device.
+    width = 8,
+    height = 7,
     silent = TRUE
   )
-  print(paste0(save_path, " finished"))
+  cat(paste("Heatmap saved to:", save_path, "\n"))
+
+  cat("\n")
+  cat("###########################################################################\n")
+  cat("  REMINDER: For rigorous transition rate analysis, use BioGeoBEARS BSM.\n")
+  cat("  PastML probability contributions are approximations only.\n")
+  cat("###########################################################################\n")
+  cat("\n")
 }
+
+# Keep old function name as alias for backward compatibility
+cal_transition_rate_tab <- cal_transition_probability_tab
 
 
 pastml_process_tree <- function(dated_tree_path,
@@ -2511,13 +2569,56 @@ biogeobears_transition_matrices <- function(best_model_results,
   }
   
   # --- Time-Stratified Event Rate Calculation ---
-  
+
   # Create a list of time periods with upper and lower bounds.
   my_time_periods <- lapply(seq_along(time_boundaries), function(i) {
     upper_bound <- time_boundaries[i]
     lower_bound <- if (i == 1) 0 else time_boundaries[i - 1]
     return(c(upper_bound, lower_bound))
   })
+
+  # --- NEW: Calculate total branch length within each time slice ---
+  # This is needed to compute per-lineage rate (as opposed to flux)
+  cat("\nCalculating branch lengths per time slice...\n")
+
+  # Get node heights (distance from root) for all nodes
+  node_heights <- ape::nodeHeights(tr)
+  # Convert to "time before present" (age)
+  tree_height <- max(node_heights)
+  # node_ages: column 1 = parent age, column 2 = child age
+  node_ages <- tree_height - node_heights
+
+  # Calculate total branch length within each time slice
+  branch_length_per_slice <- numeric(length(my_time_periods))
+  names(branch_length_per_slice) <- sapply(my_time_periods, function(p) paste(p[1], "-", p[2], "Ma"))
+
+  for (ts_index in 1:length(my_time_periods)) {
+    slice_upper <- my_time_periods[[ts_index]][1]  # older bound
+    slice_lower <- my_time_periods[[ts_index]][2]  # younger bound
+
+    total_length_in_slice <- 0
+
+    # Iterate through each edge
+    for (edge_idx in 1:nrow(tr$edge)) {
+      parent_age <- node_ages[edge_idx, 1]
+      child_age <- node_ages[edge_idx, 2]
+
+      # Calculate overlap between this edge and the time slice
+      # Edge spans from parent_age (older) to child_age (younger)
+      overlap_start <- min(parent_age, slice_upper)
+      overlap_end <- max(child_age, slice_lower)
+
+      overlap_length <- overlap_start - overlap_end
+      if (overlap_length > 0) {
+        total_length_in_slice <- total_length_in_slice + overlap_length
+      }
+    }
+
+    branch_length_per_slice[ts_index] <- total_length_in_slice
+  }
+
+  cat("Branch lengths per time slice (Ma):\n")
+  print(round(branch_length_per_slice, 2))
   
   # Initialize lists to store event counts for each time slice, separately for d and j events.
   d_timeslice_counts_list <- list()
@@ -2589,68 +2690,136 @@ biogeobears_transition_matrices <- function(best_model_results,
   avg_j_timeslice_list <- lapply(j_timeslice_counts_list, function(mat) mat / bsm_sims)
   # Calculate the total average by summing the d and j matrices.
   avg_total_timeslice_list <- mapply("+", avg_d_timeslice_list, avg_j_timeslice_list, SIMPLIFY = FALSE)
-  
-  # Convert "average event counts" to "average event rates" by dividing by the duration of each time slice.
+
+  # --- Calculate FLUX (events per unit time) ---
+  # Flux = Count / Duration
+  # This measures "how busy" a time period was (absolute activity level)
   durations_Ma <- sapply(my_time_periods, function(p) p[1] - p[2])
-  
-  avg_d_timeslice_rate_list <- mapply("/", avg_d_timeslice_list, durations_Ma, SIMPLIFY = FALSE)
-  avg_j_timeslice_rate_list <- mapply("/", avg_j_timeslice_list, durations_Ma, SIMPLIFY = FALSE)
-  avg_total_timeslice_rate_list <- mapply("/", avg_total_timeslice_list, durations_Ma, SIMPLIFY = FALSE)
-  
-  # list
+
+  avg_d_timeslice_flux_list <- mapply("/", avg_d_timeslice_list, durations_Ma, SIMPLIFY = FALSE)
+  avg_j_timeslice_flux_list <- mapply("/", avg_j_timeslice_list, durations_Ma, SIMPLIFY = FALSE)
+  avg_total_timeslice_flux_list <- mapply("/", avg_total_timeslice_list, durations_Ma, SIMPLIFY = FALSE)
+
+  # --- Calculate RATE (events per unit branch length) ---
+  # Rate = Count / Total Branch Length in Slice
+  # This measures "per-lineage dispersal propensity" (intrinsic rate)
+
+  # Handle zero branch lengths to avoid Inf/NaN
+  # Replace zeros with NA for safe division, then convert Inf/NaN to NA in results
+  safe_branch_length <- branch_length_per_slice
+  zero_slice_indices <- which(safe_branch_length == 0 | is.na(safe_branch_length))
+
+  if (length(zero_slice_indices) > 0) {
+    zero_slice_names <- names(branch_length_per_slice)[zero_slice_indices]
+    cat("\nWARNING: The following time slices have zero branch length (outside tree age or no lineages):\n")
+    cat("  ", paste(zero_slice_names, collapse = ", "), "\n")
+    cat("  Rate values for these slices will be set to NA.\n\n")
+  }
+
+  # Custom safe division function that returns NA instead of Inf/NaN
+  safe_divide_matrix <- function(mat, divisor) {
+    if (is.na(divisor) || divisor == 0) {
+      # Return a matrix of NAs with the same dimensions
+      result <- mat
+      result[,] <- NA
+      return(result)
+    } else {
+      return(mat / divisor)
+    }
+  }
+
+  avg_d_timeslice_rate_list <- mapply(safe_divide_matrix, avg_d_timeslice_list, branch_length_per_slice, SIMPLIFY = FALSE)
+  avg_j_timeslice_rate_list <- mapply(safe_divide_matrix, avg_j_timeslice_list, branch_length_per_slice, SIMPLIFY = FALSE)
+  avg_total_timeslice_rate_list <- mapply(safe_divide_matrix, avg_total_timeslice_list, branch_length_per_slice, SIMPLIFY = FALSE)
+
+  # --- Save results ---
+  # Save FLUX results
+  timeslice_flux_results <- list(
+    d_flux = avg_d_timeslice_flux_list,
+    j_flux = avg_j_timeslice_flux_list,
+    total_flux = avg_total_timeslice_flux_list,
+    durations_Ma = durations_Ma,
+    time_periods = my_time_periods
+  )
+  flux_fn <- file.path(savedir, paste0(model_name, "_avg_timeslice_FLUX_results.rds"))
+  saveRDS(timeslice_flux_results, flux_fn)
+  cat("\nFlux results saved to:", flux_fn, "\n")
+
+  # Save RATE results
   timeslice_rate_results <- list(
     d_rate = avg_d_timeslice_rate_list,
     j_rate = avg_j_timeslice_rate_list,
-    total_rate = avg_total_timeslice_rate_list
+    total_rate = avg_total_timeslice_rate_list,
+    branch_length_per_slice = branch_length_per_slice,
+    time_periods = my_time_periods
   )
+  rate_fn <- file.path(savedir, paste0(model_name, "_avg_timeslice_RATE_results.rds"))
+  saveRDS(timeslice_rate_results, rate_fn)
+  cat("Rate results saved to:", rate_fn, "\n")
+
+  # --- Print FLUX results ---
+  cat("\n\n")
+  cat("###########################################################################\n")
+  cat("#                    TIME-STRATIFIED FLUX RESULTS                        #\n")
+  cat("#        (events per Myr - measures absolute activity level)             #\n")
+  cat("###########################################################################\n\n")
+
+  cat("--- (1) D-TYPE Flux per Time Slice (events/Myr) ---\n")
+  print(lapply(avg_d_timeslice_flux_list, function(mat) round(mat, 4)))
+
+  cat("\n--- (2) J-TYPE Flux per Time Slice (events/Myr) ---\n")
+  print(lapply(avg_j_timeslice_flux_list, function(mat) round(mat, 4)))
+
+  cat("\n--- (3) TOTAL (d+j) Flux per Time Slice (events/Myr) ---\n")
+  print(lapply(avg_total_timeslice_flux_list, function(mat) round(mat, 4)))
+
+  # --- Print RATE results ---
+  cat("\n\n")
+  cat("###########################################################################\n")
+  cat("#                    TIME-STRATIFIED RATE RESULTS                        #\n")
+  cat("#     (events per branch-length-Myr - measures per-lineage propensity)   #\n")
+  cat("###########################################################################\n\n")
+
+  cat("--- (1) D-TYPE Rate per Time Slice (events/branch-Myr) ---\n")
+  print(lapply(avg_d_timeslice_rate_list, function(mat) round(mat, 6)))
+
+  cat("\n--- (2) J-TYPE Rate per Time Slice (events/branch-Myr) ---\n")
+  print(lapply(avg_j_timeslice_rate_list, function(mat) round(mat, 6)))
+
+  cat("\n--- (3) TOTAL (d+j) Rate per Time Slice (events/branch-Myr) ---\n")
+  print(lapply(avg_total_timeslice_rate_list, function(mat) round(mat, 6)))
   
-  # rds 
-  clado_events_fn <- file.path(savedir, paste0(model_name, "_avg_timeslice_rate_results.rds"))
-  saveRDS(timeslice_rate_results, clado_events_fn)
-  
-  # Print the final time-stratified rate matrices.
-  cat("\n\n--- FINAL TIME-STRATIFIED RESULTS (AS RATES) ---\n\n")
-  cat("--- (1) Average D-TYPE Event Rate Matrices per Time Slice (events/Myr) ---\n")
-  print(lapply(avg_d_timeslice_rate_list, function(mat) round(mat, 4)))
-  
-  cat("\n--- (2) Average J-TYPE Event Rate Matrices per Time Slice (events/Myr) ---\n")
-  print(lapply(avg_j_timeslice_rate_list, function(mat) round(mat, 4)))
-  
-  cat("\n--- (3) Average TOTAL (d+j) Event Rate Matrices per Time Slice (events/Myr) ---\n")
-  print(lapply(avg_total_timeslice_rate_list, function(mat) round(mat, 4)))
-  
-  # --- Visualize All Time-Stratified Rate Matrices ---
-  
+  # --- Visualize All Time-Stratified FLUX and RATE Matrices ---
+
   # A. Global Setup for Plotting
   library(ggplot2)
   library(reshape2)
   library(gridExtra)
   library(grid)
-  
+
   # B. A more flexible and reusable plotting function for heatmaps
-  plot_heatmap <- function(mat, subplot_title, scale_mode = "global", color_limits = NULL) {
-    
-    # --- NEW LOGIC for flexible scaling ---
+  # Added 'legend_label' parameter to distinguish Flux vs Rate
+  plot_heatmap <- function(mat, subplot_title, scale_mode = "global", color_limits = NULL,
+                           legend_label = "Value") {
+
     current_limits <- NULL
     if (scale_mode == "local") {
-      # For local scale, calculate limits from the current matrix 'mat'
       local_max <- if (length(mat) > 0 && max(mat, na.rm = TRUE) > 0) max(mat, na.rm = TRUE) else 1
       current_limits <- c(0, local_max)
     } else {
-      # For global scale, use the externally provided 'color_limits'
       current_limits <- color_limits
     }
-    
+
     df <- reshape2::melt(as.matrix(mat))
-    colnames(df) <- c("From", "To", "Rate")
-    
-    ggplot(df, aes(x = To, y = From, fill = Rate)) +
+    colnames(df) <- c("From", "To", "Value")
+
+    ggplot(df, aes(x = To, y = From, fill = Value)) +
       geom_tile(color = "grey80") +
-      geom_text(aes(label = ifelse(Rate > 0, sprintf("%.1e", Rate), "0.0e+00")), size = 3) +
+      geom_text(aes(label = ifelse(Value > 0, sprintf("%.1e", Value), "0.0e+00")), size = 3) +
       scale_fill_gradient(
         low = "lightblue", high = "darkred",
-        limits = current_limits, # <-- Use the determined limits
-        name = "Rate\n(events/Myr)"
+        limits = current_limits,
+        name = legend_label
       ) +
       ggtitle(subplot_title) +
       labs(x = "To (Destination)", y = "From (Source)") +
@@ -2662,98 +2831,133 @@ biogeobears_transition_matrices <- function(best_model_results,
         axis.title = element_text(size = 10, face = "bold")
       )
   }
-  
-  # Generate and Save All Plots (Both Global and Independent Scales)
 
-  # --- C. Calculate the SINGLE, GLOBAL color scale ---
-  # This part remains the same.
-  all_rates <- unlist(c(avg_d_timeslice_rate_list, avg_j_timeslice_rate_list))
-  rate_min <- 0
-  rate_max <- if (length(all_rates) > 0 && max(all_rates, na.rm = TRUE) > 0) max(all_rates, na.rm = TRUE) else 1
-  global_color_limits <- c(rate_min, rate_max)
-  
-  
-  # --- D. Plot and Save: D-TYPE Event Rates ---
-  titles_d <- names(avg_d_timeslice_rate_list)
-  
-  # D.1: Global Scale for D-events
-  plots_d_global <- mapply(plot_heatmap, avg_d_timeslice_rate_list, titles_d, 
-                           MoreArgs = list(scale_mode = "global", color_limits = global_color_limits), SIMPLIFY = FALSE)
-  plot_grid_d_global <- gridExtra::grid.arrange(
-    grobs = plots_d_global, ncol = 3,
-    top = grid::textGrob("Time-Stratified Range-Expansion (d-type) Rates (Global Scale)", gp = grid::gpar(fontsize = 16, fontface = "bold"))
-  )
-  save_path_d_global <- file.path(savedir, paste0(model_name, "_Time-Stratified_rates_D_events_GLOBAL_scale.png"))
-  ggsave(filename = save_path_d_global, plot = plot_grid_d_global, width = 20, height = 5 * ceiling(length(plots_d_global)/3), dpi = 300, limitsize = FALSE)
-  cat("D-type (Global Scale) plot saved to:", save_path_d_global, "\n")
-  
-  # D.2: Independent Scale for D-events
-  plots_d_local <- mapply(plot_heatmap, avg_d_timeslice_rate_list, titles_d, 
-                          MoreArgs = list(scale_mode = "local"), SIMPLIFY = FALSE)
-  plot_grid_d_local <- gridExtra::grid.arrange(
-    grobs = plots_d_local, ncol = 3,
-    top = grid::textGrob("Time-Stratified Range-Expansion (d-type) Rates (Independent Scales)", gp = grid::gpar(fontsize = 16, fontface = "bold"))
-  )
-  save_path_d_local <- file.path(savedir, paste0(model_name, "_Time-Stratified_rates_D_events_INDEPENDENT_scale.png"))
-  ggsave(filename = save_path_d_local, plot = plot_grid_d_local, width = 20, height = 5 * ceiling(length(plots_d_local)/3), dpi = 300, limitsize = FALSE)
-  cat("D-type (Independent Scale) plot saved to:", save_path_d_local, "\n")
-  
-  
-  # --- E. Plot and Save: J-TYPE Event Rates ---
-  if (max(unlist(avg_j_timeslice_rate_list), na.rm = TRUE) > 0) {
-    titles_j <- names(avg_j_timeslice_rate_list)
-    
-    # E.1: Global Scale for J-events
-    plots_j_global <- mapply(plot_heatmap, avg_j_timeslice_rate_list, titles_j, 
-                             MoreArgs = list(scale_mode = "global", color_limits = global_color_limits), SIMPLIFY = FALSE)
-    plot_grid_j_global <- gridExtra::grid.arrange(
-      grobs = plots_j_global, ncol = 3,
-      top = grid::textGrob("Time-Stratified Founder-Event (j-type) Rates (Global Scale)", gp = grid::gpar(fontsize = 16, fontface = "bold"))
+  # Helper function to generate a complete set of heatmaps for one metric type
+  generate_heatmap_set <- function(d_list, j_list, total_list, metric_type, legend_label, savedir, model_name) {
+
+    cat(paste0("\n--- Generating ", metric_type, " heatmaps ---\n"))
+
+    # Calculate global color scale
+    all_values <- unlist(c(d_list, j_list))
+    val_max <- if (length(all_values) > 0 && max(all_values, na.rm = TRUE) > 0) max(all_values, na.rm = TRUE) else 1
+    global_color_limits <- c(0, val_max)
+
+    # --- D-TYPE ---
+    titles_d <- names(d_list)
+
+    # Global Scale
+    plots_d_global <- mapply(plot_heatmap, d_list, titles_d,
+                             MoreArgs = list(scale_mode = "global", color_limits = global_color_limits, legend_label = legend_label),
+                             SIMPLIFY = FALSE)
+    plot_grid_d_global <- gridExtra::grid.arrange(
+      grobs = plots_d_global, ncol = 3,
+      top = grid::textGrob(paste0("Time-Stratified D-type ", metric_type, " (Global Scale)"),
+                           gp = grid::gpar(fontsize = 16, fontface = "bold"))
     )
-    save_path_j_global <- file.path(savedir, paste0(model_name, "_Time-Stratified_rates_J_events_GLOBAL_scale.png"))
-    ggsave(filename = save_path_j_global, plot = plot_grid_j_global, width = 20, height = 5 * ceiling(length(plots_j_global)/3), dpi = 300, limitsize = FALSE)
-    cat("J-type (Global Scale) plot saved to:", save_path_j_global, "\n")
-    
-    # E.2: Independent Scale for J-events
-    plots_j_local <- mapply(plot_heatmap, avg_j_timeslice_rate_list, titles_j, 
-                            MoreArgs = list(scale_mode = "local"), SIMPLIFY = FALSE)
-    plot_grid_j_local <- gridExtra::grid.arrange(
-      grobs = plots_j_local, ncol = 3,
-      top = grid::textGrob("Time-Stratified Founder-Event (j-type) Rates (Independent Scales)", gp = grid::gpar(fontsize = 16, fontface = "bold"))
+    save_path <- file.path(savedir, paste0(model_name, "_Time-Stratified_", metric_type, "_D_events_GLOBAL.png"))
+    ggsave(filename = save_path, plot = plot_grid_d_global, width = 20, height = 5 * ceiling(length(plots_d_global)/3), dpi = 300, limitsize = FALSE)
+    cat(paste0("  D-type ", metric_type, " (Global) saved: ", basename(save_path), "\n"))
+
+    # Independent Scale
+    plots_d_local <- mapply(plot_heatmap, d_list, titles_d,
+                            MoreArgs = list(scale_mode = "local", legend_label = legend_label),
+                            SIMPLIFY = FALSE)
+    plot_grid_d_local <- gridExtra::grid.arrange(
+      grobs = plots_d_local, ncol = 3,
+      top = grid::textGrob(paste0("Time-Stratified D-type ", metric_type, " (Independent Scales)"),
+                           gp = grid::gpar(fontsize = 16, fontface = "bold"))
     )
-    save_path_j_local <- file.path(savedir, paste0(model_name, "_Time-Stratified_rates_J_events_INDEPENDENT_scale.png"))
-    ggsave(filename = save_path_j_local, plot = plot_grid_j_local, width = 20, height = 5 * ceiling(length(plots_j_local)/3), dpi = 300, limitsize = FALSE)
-    cat("J-type (Independent Scale) plot saved to:", save_path_j_local, "\n")
-    
-  } else {
-    cat("All J-type event rates are zero. Plotting was skipped for J-events.\n")
+    save_path <- file.path(savedir, paste0(model_name, "_Time-Stratified_", metric_type, "_D_events_INDEPENDENT.png"))
+    ggsave(filename = save_path, plot = plot_grid_d_local, width = 20, height = 5 * ceiling(length(plots_d_local)/3), dpi = 300, limitsize = FALSE)
+    cat(paste0("  D-type ", metric_type, " (Independent) saved: ", basename(save_path), "\n"))
+
+    # --- J-TYPE ---
+    if (max(unlist(j_list), na.rm = TRUE) > 0) {
+      titles_j <- names(j_list)
+
+      # Global Scale
+      plots_j_global <- mapply(plot_heatmap, j_list, titles_j,
+                               MoreArgs = list(scale_mode = "global", color_limits = global_color_limits, legend_label = legend_label),
+                               SIMPLIFY = FALSE)
+      plot_grid_j_global <- gridExtra::grid.arrange(
+        grobs = plots_j_global, ncol = 3,
+        top = grid::textGrob(paste0("Time-Stratified J-type ", metric_type, " (Global Scale)"),
+                             gp = grid::gpar(fontsize = 16, fontface = "bold"))
+      )
+      save_path <- file.path(savedir, paste0(model_name, "_Time-Stratified_", metric_type, "_J_events_GLOBAL.png"))
+      ggsave(filename = save_path, plot = plot_grid_j_global, width = 20, height = 5 * ceiling(length(plots_j_global)/3), dpi = 300, limitsize = FALSE)
+      cat(paste0("  J-type ", metric_type, " (Global) saved: ", basename(save_path), "\n"))
+
+      # Independent Scale
+      plots_j_local <- mapply(plot_heatmap, j_list, titles_j,
+                              MoreArgs = list(scale_mode = "local", legend_label = legend_label),
+                              SIMPLIFY = FALSE)
+      plot_grid_j_local <- gridExtra::grid.arrange(
+        grobs = plots_j_local, ncol = 3,
+        top = grid::textGrob(paste0("Time-Stratified J-type ", metric_type, " (Independent Scales)"),
+                             gp = grid::gpar(fontsize = 16, fontface = "bold"))
+      )
+      save_path <- file.path(savedir, paste0(model_name, "_Time-Stratified_", metric_type, "_J_events_INDEPENDENT.png"))
+      ggsave(filename = save_path, plot = plot_grid_j_local, width = 20, height = 5 * ceiling(length(plots_j_local)/3), dpi = 300, limitsize = FALSE)
+      cat(paste0("  J-type ", metric_type, " (Independent) saved: ", basename(save_path), "\n"))
+
+    } else {
+      cat(paste0("  All J-type ", metric_type, " values are zero. Skipping J-type plots.\n"))
+    }
+
+    # --- TOTAL (d+j) ---
+    titles_total <- names(total_list)
+
+    # Global Scale
+    plots_total_global <- mapply(plot_heatmap, total_list, titles_total,
+                                 MoreArgs = list(scale_mode = "global", color_limits = global_color_limits, legend_label = legend_label),
+                                 SIMPLIFY = FALSE)
+    plot_grid_total_global <- gridExtra::grid.arrange(
+      grobs = plots_total_global, ncol = 3,
+      top = grid::textGrob(paste0("Time-Stratified Total (d+j) ", metric_type, " (Global Scale)"),
+                           gp = grid::gpar(fontsize = 16, fontface = "bold"))
+    )
+    save_path <- file.path(savedir, paste0(model_name, "_Time-Stratified_", metric_type, "_TOTAL_GLOBAL.png"))
+    ggsave(filename = save_path, plot = plot_grid_total_global, width = 20, height = 5 * ceiling(length(plots_total_global)/3), dpi = 300, limitsize = FALSE)
+    cat(paste0("  Total ", metric_type, " (Global) saved: ", basename(save_path), "\n"))
+
+    # Independent Scale
+    plots_total_local <- mapply(plot_heatmap, total_list, titles_total,
+                                MoreArgs = list(scale_mode = "local", legend_label = legend_label),
+                                SIMPLIFY = FALSE)
+    plot_grid_total_local <- gridExtra::grid.arrange(
+      grobs = plots_total_local, ncol = 3,
+      top = grid::textGrob(paste0("Time-Stratified Total (d+j) ", metric_type, " (Independent Scales)"),
+                           gp = grid::gpar(fontsize = 16, fontface = "bold"))
+    )
+    save_path <- file.path(savedir, paste0(model_name, "_Time-Stratified_", metric_type, "_TOTAL_INDEPENDENT.png"))
+    ggsave(filename = save_path, plot = plot_grid_total_local, width = 20, height = 5 * ceiling(length(plots_total_local)/3), dpi = 300, limitsize = FALSE)
+    cat(paste0("  Total ", metric_type, " (Independent) saved: ", basename(save_path), "\n"))
   }
-  
-  
-  # --- F. Plot and Save: TOTAL (d+j) Event Rates ---
-  titles_total <- names(avg_total_timeslice_rate_list)
-  
-  # F.1: Global Scale for Total-events
-  plots_total_global <- mapply(plot_heatmap, avg_total_timeslice_rate_list, titles_total, 
-                               MoreArgs = list(scale_mode = "global", color_limits = global_color_limits), SIMPLIFY = FALSE)
-  plot_grid_total_global <- gridExtra::grid.arrange(
-    grobs = plots_total_global, ncol = 3,
-    top = grid::textGrob("Time-Stratified Total Dispersal (d+j) Rates (Global Scale)", gp = grid::gpar(fontsize = 16, fontface = "bold"))
+
+  # --- Generate FLUX heatmaps ---
+  generate_heatmap_set(
+    d_list = avg_d_timeslice_flux_list,
+    j_list = avg_j_timeslice_flux_list,
+    total_list = avg_total_timeslice_flux_list,
+    metric_type = "FLUX",
+    legend_label = "Flux\n(events/Myr)",
+    savedir = savedir,
+    model_name = model_name
   )
-  save_path_total_global <- file.path(savedir, paste0(model_name, "_Time-Stratified_rates_TOTAL_dispersal_GLOBAL_scale.png"))
-  ggsave(filename = save_path_total_global, plot = plot_grid_total_global, width = 20, height = 5 * ceiling(length(plots_total_global)/3), dpi = 300, limitsize = FALSE)
-  cat("Total Dispersal (Global Scale) plot saved to:", save_path_total_global, "\n")
-  
-  # F.2: Independent Scale for Total-events
-  plots_total_local <- mapply(plot_heatmap, avg_total_timeslice_rate_list, titles_total, 
-                              MoreArgs = list(scale_mode = "local"), SIMPLIFY = FALSE)
-  plot_grid_total_local <- gridExtra::grid.arrange(
-    grobs = plots_total_local, ncol = 3,
-    top = grid::textGrob("Time-Stratified Total Dispersal (d+j) Rates (Independent Scales)", gp = grid::gpar(fontsize = 16, fontface = "bold"))
+
+  # --- Generate RATE heatmaps ---
+  generate_heatmap_set(
+    d_list = avg_d_timeslice_rate_list,
+    j_list = avg_j_timeslice_rate_list,
+    total_list = avg_total_timeslice_rate_list,
+    metric_type = "RATE",
+    legend_label = "Rate\n(events/\nbranch-Myr)",
+    savedir = savedir,
+    model_name = model_name
   )
-  save_path_total_local <- file.path(savedir, paste0(model_name, "_Time-Stratified_rates_TOTAL_dispersal_INDEPENDENT_scale.png"))
-  ggsave(filename = save_path_total_local, plot = plot_grid_total_local, width = 20, height = 5 * ceiling(length(plots_total_local)/3), dpi = 300, limitsize = FALSE)
-  cat("Total Dispersal (Independent Scale) plot saved to:", save_path_total_local, "\n")
+
+  cat("\n--- All FLUX and RATE heatmaps generated successfully ---\n")
   
   # --- 7.6 Generate all temporal trend plots ---
   cat("\n--- Generating temporal trend plots ---\n")
