@@ -7,6 +7,197 @@
 # biogeography_analysis_pastml: Performs biogeographical analysis using PastML.
 # biogeography_analysis_biogeobears: Performs biogeographical analysis using BioGeoBEARS.
 
+# =============================================================================
+#  ENVIRONMENT PRE-CHECK (runs automatically on source)
+# =============================================================================
+#
+#  This function checks all dependencies before running the pipeline.
+#  It will report all missing components at once, so you can fix them all
+#  before starting a long analysis.
+#
+# =============================================================================
+
+check_pipeline_environment <- function(verbose = TRUE) {
+
+  cat("\n")
+  cat("###########################################################################\n")
+  cat("#              PIPELINE ENVIRONMENT PRE-CHECK                            #\n")
+  cat("###########################################################################\n\n")
+
+  errors <- c()
+  warnings <- c()
+
+  # --- 1. Check R packages ---
+  cat("--- 1. Checking R packages ---\n")
+
+  required_packages <- c(
+    "ape", "phytools", "stringr", "dplyr", "tidyr", "ggplot2",
+    "BioGeoBEARS", "cladoRcpp", "pheatmap", "reshape2", "gridExtra", "grid"
+  )
+
+  optional_packages <- c(
+    "ggtree", "treeio", "tidyverse", "circlize", "MultinomialCI"
+  )
+
+  missing_required <- c()
+  missing_optional <- c()
+
+  for (pkg in required_packages) {
+    if (!requireNamespace(pkg, quietly = TRUE)) {
+      missing_required <- c(missing_required, pkg)
+    }
+  }
+
+  for (pkg in optional_packages) {
+    if (!requireNamespace(pkg, quietly = TRUE)) {
+      missing_optional <- c(missing_optional, pkg)
+    }
+  }
+
+  if (length(missing_required) > 0) {
+    errors <- c(errors, paste0("Missing REQUIRED R packages: ", paste(missing_required, collapse = ", ")))
+    cat("  [FAIL] Missing required packages:", paste(missing_required, collapse = ", "), "\n")
+  } else {
+    cat("  [OK] All required R packages installed\n")
+  }
+
+  if (length(missing_optional) > 0) {
+    warnings <- c(warnings, paste0("Missing optional R packages: ", paste(missing_optional, collapse = ", ")))
+    cat("  [WARN] Missing optional packages:", paste(missing_optional, collapse = ", "), "\n")
+  }
+
+  # --- 2. Check WSL ---
+  cat("\n--- 2. Checking WSL ---\n")
+
+  wsl_check <- suppressWarnings(system("wsl echo OK", intern = TRUE, ignore.stderr = TRUE))
+  if (length(wsl_check) == 0 || !any(grepl("OK", wsl_check))) {
+    errors <- c(errors, "WSL is not available or not configured properly")
+    cat("  [FAIL] WSL not available\n")
+  } else {
+    cat("  [OK] WSL is available\n")
+  }
+
+  # --- 3. Check PastML in WSL ---
+  cat("\n--- 3. Checking PastML (in WSL) ---\n")
+
+  pastml_path <- ""
+  tryCatch({
+    con <- pipe('wsl bash -ic "which pastml"', "r")
+    lines <- readLines(con, warn = FALSE)
+    close(con)
+    for (line in lines) {
+      line <- trimws(line)
+      if (grepl("^/.*pastml$", line)) {
+        pastml_path <- line
+        break
+      }
+    }
+  }, error = function(e) {})
+
+  if (nchar(pastml_path) == 0) {
+    errors <- c(errors, "PastML not found in WSL. Install with: wsl pip install pastml")
+    cat("  [FAIL] PastML not found\n")
+  } else {
+    cat("  [OK] PastML found:", pastml_path, "\n")
+  }
+
+  # --- 4. Check RAxML-NG in WSL ---
+  cat("\n--- 4. Checking RAxML-NG (in WSL) ---\n")
+
+  raxml_path <- ""
+  tryCatch({
+    con <- pipe('wsl bash -ic "which raxml-ng"', "r")
+    lines <- readLines(con, warn = FALSE)
+    close(con)
+    for (line in lines) {
+      line <- trimws(line)
+      if (grepl("raxml-ng", line)) {
+        raxml_path <- line
+        break
+      }
+    }
+  }, error = function(e) {})
+
+  if (nchar(raxml_path) == 0) {
+    warnings <- c(warnings, "RAxML-NG not found in WSL (only needed for tree construction)")
+    cat("  [WARN] RAxML-NG not found (only needed for tree construction)\n")
+  } else {
+    cat("  [OK] RAxML-NG found:", raxml_path, "\n")
+  }
+
+  # --- 5. Check treePL in WSL ---
+  cat("\n--- 5. Checking treePL (in WSL) ---\n")
+
+  treepl_path <- ""
+  tryCatch({
+    con <- pipe('wsl bash -ic "which treePL"', "r")
+    lines <- readLines(con, warn = FALSE)
+    close(con)
+    for (line in lines) {
+      line <- trimws(line)
+      if (grepl("treePL", line)) {
+        treepl_path <- line
+        break
+      }
+    }
+  }, error = function(e) {})
+
+  if (nchar(treepl_path) == 0) {
+    warnings <- c(warnings, "treePL not found in WSL (only needed for tree dating)")
+    cat("  [WARN] treePL not found (only needed for tree dating)\n")
+  } else {
+    cat("  [OK] treePL found:", treepl_path, "\n")
+  }
+
+  # --- Summary ---
+  cat("\n")
+  cat("###########################################################################\n")
+  cat("#                         PRE-CHECK SUMMARY                              #\n")
+  cat("###########################################################################\n\n")
+
+  if (length(errors) == 0 && length(warnings) == 0) {
+    cat("  [ALL OK] Environment is ready for full pipeline execution!\n\n")
+    return(invisible(TRUE))
+  }
+
+  if (length(warnings) > 0) {
+    cat("  WARNINGS (pipeline may still work for some functions):\n")
+    for (w in warnings) {
+      cat("    -", w, "\n")
+    }
+    cat("\n")
+  }
+
+  if (length(errors) > 0) {
+    cat("  ERRORS (must fix before running pipeline):\n")
+    for (e in errors) {
+      cat("    -", e, "\n")
+    }
+    cat("\n")
+    cat("  To install missing R packages, run:\n")
+    cat("    install.packages(c(\"ape\", \"phytools\", \"stringr\", \"dplyr\", \"tidyr\", \"ggplot2\", \"pheatmap\", \"reshape2\", \"gridExtra\"))\n")
+    cat("    # For BioGeoBEARS (from GitHub):\n")
+    cat("    devtools::install_github(\"nmatzke/BioGeoBEARS\")\n")
+    cat("\n")
+    cat("  To install PastML in WSL, run:\n")
+    cat("    wsl pip install pastml\n")
+    cat("\n")
+    stop("Environment check failed. Please fix the errors above before running the pipeline.")
+  }
+
+  return(invisible(TRUE))
+}
+
+# Run environment check automatically on source
+# Set CHECK_ON_SOURCE <- FALSE before source() to skip
+if (!exists("CHECK_ON_SOURCE") || CHECK_ON_SOURCE != FALSE) {
+  check_pipeline_environment()
+}
+
+# =============================================================================
+#  PIPELINE FUNCTIONS START HERE
+# =============================================================================
+
 # Step 1: Construct a backbone tree (mitogenomes only) and a reconstruction tree (mitogenomes + barcode).
 # This step uses multiple distant groups (for rooting), one sister group (for dating), and sequences of the target family.
 # The format for sequences and tree tip labels is: genetype_id_taxon_biogeographic_realm, e.g., MMG_GBDL00960_Cleridae_NA, MMG_BIOD06517_Cleridae_NT, GMT_GMNGF130-16_Cleridae_OC.
@@ -1550,6 +1741,10 @@ cal_transition_probability_tab <- function(named_tree_path, probabilities_filepa
   # --- 6. Visualization ---
   save_path <- sub("\\_probabilities.tab$", "_transition_probability_heatmap.png", probabilities_filepath)
 
+  # Sort matrix rows and columns alphabetically for consistent comparison with BioGeoBEARS
+  sorted_names <- sort(rownames(normalized_contribution_matrix))
+  normalized_contribution_matrix <- normalized_contribution_matrix[sorted_names, sorted_names]
+
   # Convert numbers to scientific notation for display on the heatmap.
   numbers_sci <- formatC(normalized_contribution_matrix, format = "e", digits = 2)
 
@@ -1620,8 +1815,28 @@ pastml_process_tree <- function(tree_path,
   dir.create(win_tree_dir, showWarnings = FALSE)
 
   # Get the path to PastML within WSL.
-  pastml_path_raw <- system("wsl bash -ic 'which pastml'", intern = TRUE)
-  pastml_path <- tail(pastml_path_raw, 1)
+  # Use pipe() with bash -ic (interactive) to load .bashrc which contains PATH
+  pastml_path <- ""
+  tryCatch({
+    con <- pipe('wsl bash -ic "which pastml"', "r")
+    lines <- readLines(con, warn = FALSE)
+    close(con)
+    # Find line containing pastml path (starts with /)
+    for (line in lines) {
+      line <- trimws(line)
+      if (grepl("^/.*pastml$", line)) {
+        pastml_path <- line
+        break
+      }
+    }
+  }, error = function(e) {
+    pastml_path <<- ""
+  })
+
+  if (nchar(pastml_path) == 0) {
+    stop("PastML not found in WSL. Please install with: pip install pastml")
+  }
+
   cat("PastML path:", pastml_path, "\n")
 
   # Read tree
@@ -2226,7 +2441,88 @@ run_biogeobears_pipeline <- function(tree_filepath,
   
   # Final check to ensure no zero-length branches remain.
   if (any(tr_processed$edge.length <= 0)) stop("FATAL ERROR: Tree fixing failed! Non-positive branch lengths still exist.")
-  
+
+  # --- Pre-check: Validate tree is time-calibrated before time-stratified analysis ---
+  tree_age <- max(ape::branching.times(tr_processed))
+
+  if (!is.null(timeperiods_filepath) && !is.null(dispersal_multipliers_filepath)) {
+    # Check 1: Tree age is suspiciously small (likely not dated)
+    if (tree_age < 1) {
+      cat("\n")
+      cat("###########################################################################\n")
+      cat("#                    WARNING: TREE MAY NOT BE DATED                      #\n")
+      cat("###########################################################################\n")
+      cat("\n")
+      cat("  Tree root age:", round(tree_age, 4), "Ma\n")
+      cat("\n")
+      cat("  This is suspiciously small. The tree may not be time-calibrated.\n")
+      cat("  Time-stratified BioGeoBEARS analysis REQUIRES a dated tree.\n")
+      cat("\n")
+      cat("  Possible causes:\n")
+      cat("    - Tree branch lengths are in substitution units, not time units\n")
+      cat("    - Molecular clock dating was not performed\n")
+      cat("    - Dating failed silently\n")
+      cat("\n")
+      cat("  Solutions:\n")
+      cat("    1. Run molecular clock dating (e.g., treePL, chronos, BEAST)\n")
+      cat("    2. Or skip time-stratified analysis by setting:\n")
+      cat("       timeperiods_filepath = NULL\n")
+      cat("       dispersal_multipliers_filepath = NULL\n")
+      cat("\n")
+      cat("###########################################################################\n")
+      cat("\n")
+      stop("Tree root age (", round(tree_age, 4), " Ma) is too small. Please provide a time-calibrated tree for time-stratified analysis.")
+    }
+
+    # Check 2: Tree age vs time periods compatibility
+    time_boundaries_check <- as.numeric(readLines(timeperiods_filepath))
+    min_time_boundary <- min(time_boundaries_check[time_boundaries_check > 0])
+
+    if (tree_age < min_time_boundary) {
+      cat("\n")
+      cat("###########################################################################\n")
+      cat("#              ERROR: TREE AGE vs TIME PERIODS MISMATCH                  #\n")
+      cat("###########################################################################\n")
+      cat("\n")
+      cat("  Tree root age:", round(tree_age, 2), "Ma\n")
+      cat("  Smallest time boundary:", min_time_boundary, "Ma\n")
+      cat("\n")
+      cat("  The tree is younger than your time stratification boundaries.\n")
+      cat("  BioGeoBEARS time-stratified analysis cannot proceed.\n")
+      cat("\n")
+      cat("  Solutions:\n")
+      cat("    1. Use a properly dated tree with appropriate age\n")
+      cat("    2. Adjust your time periods file to match tree age\n")
+      cat("    3. Skip time-stratified analysis by setting:\n")
+      cat("       timeperiods_filepath = NULL\n")
+      cat("       dispersal_multipliers_filepath = NULL\n")
+      cat("\n")
+      cat("###########################################################################\n")
+      cat("\n")
+      stop("Tree root age (", round(tree_age, 2), " Ma) is younger than the smallest time boundary (", min_time_boundary, " Ma).")
+    }
+
+    # Check 3: Negative branching times (indicates serious problem)
+    all_bt <- ape::branching.times(tr_processed)
+    if (any(all_bt < 0)) {
+      n_negative <- sum(all_bt < 0)
+      cat("\n")
+      cat("###########################################################################\n")
+      cat("#              WARNING: NEGATIVE BRANCHING TIMES DETECTED                #\n")
+      cat("###########################################################################\n")
+      cat("\n")
+      cat("  Found", n_negative, "nodes with negative branching times.\n")
+      cat("  This indicates the tree has serious problems with branch lengths.\n")
+      cat("  The tree may not be ultrametric or properly dated.\n")
+      cat("\n")
+      cat("###########################################################################\n")
+      cat("\n")
+      stop("Tree has ", n_negative, " nodes with negative branching times. Please check tree dating.")
+    }
+
+    cat("  [OK] Tree age check passed:", round(tree_age, 2), "Ma\n")
+  }
+
   # Proactively fix a known issue in BioGeoBEARS for time-stratified analysis.
   if (TRUE) {
     # An error can occur if a node age in the tree is exactly equal to a time-slice boundary.
@@ -3042,6 +3338,9 @@ biogeobears_transition_matrices <- function(best_model_results,
       message("NOTE: All d-type event rates are zero. Skipping heatmap plot.")
     } else {
       rates_mat <- as.matrix(rates_d_events)
+      # Sort matrix rows and columns alphabetically for consistent comparison
+      sorted_names <- sort(rownames(rates_mat))
+      rates_mat <- rates_mat[sorted_names, sorted_names]
       numbers_sci <- matrix(formatC(rates_mat, format = "e", digits = 2),
                             nrow = nrow(rates_mat), ncol = ncol(rates_mat), dimnames = dimnames(rates_mat))
       pheatmap::pheatmap(
@@ -3074,6 +3373,9 @@ biogeobears_transition_matrices <- function(best_model_results,
       message("NOTE: All j-type event rates are zero. Skipping heatmap plot.")
     } else {
       rates_mat <- as.matrix(rates_j_events)
+      # Sort matrix rows and columns alphabetically for consistent comparison
+      sorted_names <- sort(rownames(rates_mat))
+      rates_mat <- rates_mat[sorted_names, sorted_names]
       numbers_sci <- matrix(formatC(rates_mat, format = "e", digits = 2),
                             nrow = nrow(rates_mat), ncol = ncol(rates_mat), dimnames = dimnames(rates_mat))
       pheatmap::pheatmap(
@@ -3116,6 +3418,9 @@ biogeobears_transition_matrices <- function(best_model_results,
       message("NOTE: Total dispersal rates (d+j) are all zero. Skipping heatmap plot.")
     } else {
       rates_mat <- as.matrix(total_dispersal_rates)
+      # Sort matrix rows and columns alphabetically for consistent comparison
+      sorted_names <- sort(rownames(rates_mat))
+      rates_mat <- rates_mat[sorted_names, sorted_names]
       numbers_sci <- matrix(formatC(rates_mat, format = "e", digits = 2),
                             nrow = nrow(rates_mat), ncol = ncol(rates_mat), dimnames = dimnames(rates_mat))
       pheatmap::pheatmap(
@@ -3478,6 +3783,10 @@ biogeobears_transition_matrices <- function(best_model_results,
   # Added 'legend_label' parameter to distinguish Flux vs Rate
   plot_heatmap <- function(mat, subplot_title, scale_mode = "global", color_limits = NULL,
                            legend_label = "Value") {
+
+    # Sort matrix rows and columns alphabetically for consistent comparison
+    sorted_names <- sort(rownames(mat))
+    mat <- mat[sorted_names, sorted_names]
 
     current_limits <- NULL
     if (scale_mode == "local") {
