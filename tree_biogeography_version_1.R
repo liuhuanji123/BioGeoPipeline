@@ -1,4 +1,4 @@
-#20260204
+#20260227
 # The pipeline consists of the following steps:
 # construction_tree: Constructs the phylogenetic tree.
 # rooting_tree: Roots the tree generated in the previous step.
@@ -2973,12 +2973,18 @@ run_biogeobears_pipeline <- function(tree_filepath,
   })
   
   # Call the next function to perform Biogeographical Stochastic Mapping (BSM).
-  biogeobears_transition_matrices(
-    best_model_results = best_model_results,
-    save_biogeobears_path = save_biogeobears_path,
-    comparison_table = restable,
-    time_boundaries = time_boundaries_no_zero
-  )
+  # Keep the main pipeline robust: visualization/BSM post-processing errors should
+  # not invalidate model fitting outputs that were already computed successfully.
+  tryCatch({
+    biogeobears_transition_matrices(
+      best_model_results = best_model_results,
+      save_biogeobears_path = save_biogeobears_path,
+      comparison_table = restable,
+      time_boundaries = time_boundaries_no_zero
+    )
+  }, error = function(e) {
+    warning("BSM/visualization module failed, but model-fitting results are kept: ", e$message)
+  })
   
   # --- 9. Return a list containing all important information ---
   return(invisible(list(
@@ -3563,8 +3569,21 @@ biogeobears_transition_matrices <- function(best_model_results,
   # This is needed to compute per-lineage rate (as opposed to flux)
   cat("\nCalculating branch lengths per time slice...\n")
 
-  # Get node heights (distance from root) for all nodes
-  node_heights <- ape::nodeHeights(tr)
+  # Get node heights (distance from root) for all nodes.
+  # Compatibility note: nodeHeights is no longer exported by some ape versions.
+  # Fallback to phytools implementation when needed.
+  get_node_heights_compat <- function(phy) {
+    ape_nodeheights_fn <- tryCatch(getFromNamespace("nodeHeights", "ape"), error = function(e) NULL)
+    if (is.function(ape_nodeheights_fn)) {
+      return(ape_nodeheights_fn(phy))
+    }
+    phytools_nodeheights_fn <- tryCatch(getFromNamespace("nodeHeights", "phytools"), error = function(e) NULL)
+    if (is.function(phytools_nodeheights_fn)) {
+      return(phytools_nodeheights_fn(phy))
+    }
+    stop("nodeHeights() not found in ape or phytools namespaces.")
+  }
+  node_heights <- get_node_heights_compat(tr)
   # Convert to "time before present" (age)
   tree_height <- max(node_heights)
   # node_ages: column 1 = parent age, column 2 = child age
